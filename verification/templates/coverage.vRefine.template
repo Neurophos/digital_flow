@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Cadence IMC vRefine signal-level toggle-exclusion template.
+  Load with: load -refinement coverage.vRefine  (see cov_exclusions.tcl).
+  UCIS path root is '<covdut>' (xrun -covdut <top>); entityName = <top>/<inst>/<signal>.
+  Name a VECTOR ROOT (no [N]) to exclude all bits.  Register bits are flat _qs
+  nets at the u_reg level (e.g. chip_ioN_ctrl_gpio_ie_qs), NOT reg2hw.*.q (NOMATCH).
+  Exclude ONLY provably-dead nodes; IMC errors "*E,EREXCE: Excluding covered
+  entity" if you exclude something now covered -> remove that rule.
+-->
+<refinement-file-root>
+  <information comment-version="2" creator="TODO" tool-version="Cadence Verisium Manager 25.09" rules-signature-c="0">
+    <ucm-files></ucm-files>
+    <ccf-files></ccf-files>
+  </information>
+  <rules>
+    <!-- category header: describe WHY these are dead + the RTL source lines -->
+    <rule ccType="inst" comment="1" domain="icc" entityName="TOP/INST/SIGNAL" entityType="toggle" excTime="0" name="exclude" reviewer="TODO" user="TODO" vscope="default"></rule>
+  </rules>
+  <cache-map>
+    <cache-entry key="1" value="reason: <constant tie-off / disconnected IP / dead by construction>"></cache-entry>
+  </cache-map>
+</refinement-file-root>
