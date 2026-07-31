@@ -5,18 +5,32 @@ description: Run Jasper CDC/RDC analysis (make jcdc) on Neurophos RTL and interp
 
 # cdc-jasper
 
-> **STATUS: stub** — frontmatter is complete (discoverable); body to be filled
-> from the Sources below. Follow the format of the FULL skills
-> (verification/skills/coverage-closure, uvm-methodology; analog_digital_integration/skills/rnm-mixed-signal).
-
 ## When to use
-_TODO_
+Verifying clock/reset-domain crossings after adding or touching a CDC — e.g. the
+`hclk`↔`dac_clk` command/data crossings, the FabIO C2T interface, any
+`ni_*_sync*` synchroniser.
 
-## Flow (commands)
-_TODO — distill the invocation from the Makefile targets / scripts in Sources._
+## Flow
+Run in the module `rtl/` dir; `Makefile.rtl` builds the Jasper filelist (via
+`alchemy`) then runs Jasper CDC:
+```bash
+make jcdc          # batch: cd $JASPER_RUN_DIR; jg -batch $JCDC_RUN_CMD_OPTS
+make jcdc_gui      # interactive
+```
+Reports/violations under the Jasper run dir. Triage each crossing to a real
+synchroniser or a waiver.
 
 ## Gotchas
-_TODO — capture the non-obvious failure modes._
+- **Missing macro black-boxes block elaboration.** `jcdc` (and lint) can't
+  elaborate blocks that instantiate SRAM/ROM macros or AnaTop without their
+  black-boxes — restore the black-boxes so real crossings are actually analyzed.
+  A known example: the `dac_ctrl` command CDC (`hclk`→`dac_clk`) was a real bug
+  (single-pulse `cmd.qe` crossed unsynchronised) that CDC *should* have flagged,
+  but the block wouldn't elaborate for `jcdc` due to missing black-boxes — worth
+  restoring so that class of bug is tool-caught, not found only in sim.
+- CDC needs the generated `.sv` + regs — run `make prepro`/`build_regs` first.
 
 ## Sources (MSIC)
-`make jcdc` / `jcdc_gui` targets, `doc/msic_methodology.md` (Jasper CDC/RDC section). NOTE: jcdc may fail to elaborate blocks with missing macro black-boxes (SRAM/AnaTop) — restore black-boxes so real crossings (e.g. the dac command CDC) are tool-checked.
+`utils/chip_utils/config/Makefile.rtl` (`jcdc`/`jcdc_gui`),
+`doc/msic_methodology.md` (Jasper CDC/RDC section),
+`doc/rtl_bugs_found_in_verification.md` (#1 DAC command CDC).

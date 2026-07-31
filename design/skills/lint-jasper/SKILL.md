@@ -5,18 +5,28 @@ description: Run Jasper SuperLint (make slint) on Neurophos RTL and triage resul
 
 # lint-jasper
 
-> **STATUS: stub** — frontmatter is complete (discoverable); body to be filled
-> from the Sources below. Follow the format of the FULL skills
-> (verification/skills/coverage-closure, uvm-methodology; analog_digital_integration/skills/rnm-mixed-signal).
-
 ## When to use
-_TODO_
+Before merging an RTL change; after an RTL fix (confirm `Errors = 0`); chasing a
+structural issue (undriven/multi-driven nets, width mismatch, inferred latch).
 
-## Flow (commands)
-_TODO — distill the invocation from the Makefile targets / scripts in Sources._
+## Flow
+Run in the module `rtl/` dir. `make slint` builds the Jasper filelist (via
+`alchemy`), then runs JasperGold SuperLint from `Makefile.rtl`:
+```bash
+make slint          # batch: cd $JASPER_RUN_DIR; jg $SL_RUN_CMD_OPTS
+make slint_gui      # interactive / reload the existing database
+```
+The lint policy/setup is `utils/chip_utils/scripts/lint/base_lint_run.tcl`
+(reload via `sl_reload.tcl`). Logs land under the Jasper run dir.
 
 ## Gotchas
-_TODO — capture the non-obvious failure modes._
+- Fix to **`Errors = 0`** before merge; treat waivable warnings deliberately (a
+  real RTL bug — e.g. an undriven `hw2reg.*.de` driving a subreg enable to X — can
+  hide as a lint warning).
+- SuperLint needs the same generated `.sv` + regs the sim uses — run `make prepro`
+  / `build_regs` first so it lints the real elaborated design, not stale sources.
 
 ## Sources (MSIC)
-`utils/chip_utils/scripts/lint/{base_lint_run,sl_reload}.tcl`, `make slint` / `slint_gui` targets, `doc/msic_methodology.md` (Lint section).
+`utils/chip_utils/config/Makefile.rtl` (`slint`/`slint_gui`),
+`utils/chip_utils/scripts/lint/{base_lint_run,sl_reload}.tcl`,
+`doc/msic_methodology.md` (Lint section).

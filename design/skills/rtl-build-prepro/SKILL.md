@@ -5,18 +5,46 @@ description: Generate RTL filelists with alchemy and preprocess .pysv->.sv (Pyth
 
 # rtl-build-prepro
 
-> **STATUS: stub** — frontmatter is complete (discoverable); body to be filled
-> from the Sources below. Follow the format of the FULL skills
-> (verification/skills/coverage-closure, uvm-methodology; analog_digital_integration/skills/rnm-mixed-signal).
-
 ## When to use
-_TODO_
+Compiling/elaborating RTL; adding a module; regenerating a `.sv` produced from a
+`.pysv` (pin config in `digital_top`, `dac_ctrl`, etc.); producing a filelist for
+sim / synth / lint.
 
-## Flow (commands)
-_TODO — distill the invocation from the Makefile targets / scripts in Sources._
+## Flow
+Run from a module's `rtl/` dir (or the module dir). `ROOT_DIR` and the flow live
+in `utils/chip_utils/config/Makefile.rtl`.
+
+- **Preprocess `.pysv` → `.sv`** (Python-templated Verilog; embeds params from
+  `common_data/soc_sysinfo/msic_sysinfo.yaml` via `read_sysinfo`/`read_pinout`):
+  ```bash
+  make prepro        # or bare `make` in the rtl dir
+  # tool: utils/chip_utils/scripts/prepro -o <file>.sv <file>.pysv
+  ```
+- **Filelist / manifest** — `alchemy` reads the module `config/*.yaml` hierarchy
+  and emits an option-file (`+incdir`, `-y`, packages, interfaces, rtl):
+  ```
+  alchemy -ws $ROOT_DIR -yaml <config>.yaml -top <top> -sim  run.f    # sim manifest
+  alchemy ... -syn syn.f | -lef lef.f | -gds gds.f | -mmmc mmmc.tcl   # other flows
+  ```
+- **Compile check** — `make build_rtl` runs `xrun` over the RTL filelist (also
+  runs `build_regs` first).
 
 ## Gotchas
-_TODO — capture the non-obvious failure modes._
+- **Generated `.sv` may carry manual edits not in the `.pysv`.** e.g. `digital_top.sv`
+  had a hand-added CoreSight ROM-table block that lived only in the `.sv`;
+  regenerating from `.pysv` silently dropped it (broke `coresight_fw_discovery_test`).
+  **Fold any manual `.sv` edit back into the `.pysv`** so the generator is the
+  complete source of truth. Verify with `diff <regenerated.sv> <last-good.sv>` —
+  the diff should be *only* your intended change.
+- `.pysv` runs Python at prepro time — it's real code (loops over pins, reads the
+  pinout spreadsheet); a wrong pin attribute (e.g. an input-enable `alt_ie_val=0`)
+  produces functionally-dead RTL. Trace generated assigns to the pinout source.
+- alchemy `+/-` suffixes select `*_sim_only` / `*_syn_only` files; `...` on a path
+  = that instance + all descendants.
 
 ## Sources (MSIC)
-`utils/chip_utils/scripts/alchemy` (filelist/manifest), `prepro` (pysv->sv), `scripts/compile_rtl.pl`, `utils/chip_utils/config/Makefile.rtl`, `doc/python_prepro.md`, `doc/digital_design_flow.md`, module `config/*.yaml`, `common_data/soc_sysinfo/msic_sysinfo.yaml`. NOTE: some generated .sv carry manual edits not in the .pysv (e.g. digital_top CoreSight block) — regenerating drops them; fold manual edits into the .pysv source.
+`utils/chip_utils/config/Makefile.rtl` (prepro/alchemy/build_rtl/build_regs),
+`utils/chip_utils/scripts/{prepro,alchemy}`, `scripts/compile_rtl.pl`,
+`scripts/soc_pylib/{read_sysinfo,read_pinout}.py`,
+`common_data/soc_sysinfo/msic_sysinfo.yaml`, module `config/*.yaml`,
+`doc/{python_prepro,digital_design_flow}.md`.

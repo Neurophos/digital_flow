@@ -5,18 +5,45 @@ description: Run the Neurophos UVM regression — serial (run_regression.sh) and
 
 # regression-parallel
 
-> **STATUS: stub** — frontmatter is complete (discoverable); body to be filled
-> from the Sources below. Follow the format of the FULL skills
-> (verification/skills/coverage-closure, uvm-methodology; analog_digital_integration/skills/rnm-mixed-signal).
-
 ## When to use
-_TODO_
+Running the full suite (or a subset) before/after a change; producing a merged
+coverage database; validating a shared TB/RTL change didn't regress.
 
-## Flow (commands)
-_TODO — distill the invocation from the Makefile targets / scripts in Sources._
+## Flow
+From `verif/uvm/`:
+```bash
+./run_regression.sh                       # serial, all tests
+./run_regression_parallel.sh COV=1        # 5 workers + coverage (collect + merge)
+./run_regression_parallel.sh JOBS=6 COV=1 SUBSET="msic_smoke_test fabio_cr_test"
+```
+Parallel runner: each worker gets an isolated `scratch_parN/` (own worklib, own
+elaboration snapshot — no worklib race), `MAX_LIC` caps concurrent licenses.
+Register a test by adding it to the `NOFW_TESTS`/`FW_TESTS` arrays (parallel:
+`add_job "<name>" "TESTNAME=... FIRMWARE_TESTNAME=..."`). Serial runner has helpers
+for special cases:
+- `run_test_slow <test> <TIMEOUT_NS>` — tests exceeding the 100 ms default (e.g.
+  DAC-SRAM reads at the 10 kHz `dac_clk`).
+- `run_test_nofabio <test>` — `FABIO_NOCLK=1` + relaxed criterion (GPIO pad tests).
+
+Results: `regr_results/`, a `REGR_RESULT: N PASS M FAIL ...` line, and the merged
+DB at `scratch/cov_work/scope/merged`. On completion:
+`make cov_report REPORT_TEST=merged`.
 
 ## Gotchas
-_TODO — capture the non-obvious failure modes._
+- **License reality:** 7 `Xcelium_Single_Core`, **no** `Xcelium_Multi_Core` — MCE
+  / design-partitioning is unavailable; keep parallelism ≤ ~5 (`MAX_LIC`). IMC
+  merge also needs a Single_Core license (transient `LICERR` during the busy
+  window → re-run `make cov_merge`).
+- **`evaluate_log` pass criterion:** PASS = `grep "TEST PASSED"` (UVM banner) +
+  `UVM_ERROR: 0`. It does **not** require the firmware's own `** TEST PASSED **`
+  banner — a firmware test can print `TEST FAILED` and still be scored PASS. When
+  validating firmware, check the UART `err_cnt`/banner too.
+- A shared TB/RTL change → run the **full** regression (a change to the tb_ctrl
+  handler or a generated top-level `.sv` touches every test).
+- Wall-clock ≈ 70 min for the full suite at 5 workers; a single slow test (DAC-SRAM
+  read) is the long pole.
 
 ## Sources (MSIC)
-`verif/uvm/run_regression.sh`, `verif/uvm/run_regression_parallel.sh` (MAX_LIC cap, per-shard scratch_parN, add_job), `utils/verif_utils/scripts/regress.pl`, `verif/msic_top_v_tb/run_regression.py`. License reality: 7 Xcelium_Single_Core, NO Multi_Core (cap parallelism at ~5). `evaluate_log` scores PASS on the UVM banner + UVM_ERROR:0 (can mask firmware TEST FAILED).
+`verif/uvm/run_regression.sh` (`evaluate_log`, `run_test_slow`, `run_test_nofabio`),
+`verif/uvm/run_regression_parallel.sh` (MAX_LIC, scratch_parN, add_job),
+`utils/verif_utils/scripts/regress.pl`, `verif/msic_top_v_tb/run_regression.py`.

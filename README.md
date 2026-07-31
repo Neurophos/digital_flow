@@ -28,24 +28,25 @@ agent, and a body of **When to use / Flow / Gotchas / Sources**. The `Sources`
 section lists the repo files each skill distills, so it can be verified against
 the code.
 
-| Area | Skill | Status |
-|---|---|---|
-| design | `env-setup` | stub |
-| design | `rtl-build-prepro` | stub |
-| design | `registers-regtool` | stub |
-| design | `lint-jasper` | stub |
-| design | `cdc-jasper` | stub |
-| verification | `simulation-xcelium` | stub |
-| verification | **`uvm-methodology`** | **full** |
-| verification | `regression-parallel` | stub |
-| verification | **`coverage-closure`** | **full** |
-| verification | `firmware-tbctrl` | stub |
-| verification | `debug-bughunting` | stub |
-| implementation | `synthesis-impl` | stub |
-| analog_digital_integration | **`rnm-mixed-signal`** | **full** |
+| Area | Skill |
+|---|---|
+| design | `env-setup` |
+| design | `rtl-build-prepro` |
+| design | `registers-regtool` |
+| design | `lint-jasper` |
+| design | `cdc-jasper` |
+| verification | `simulation-xcelium` |
+| verification | `uvm-methodology` |
+| verification | `regression-parallel` |
+| verification | `coverage-closure` |
+| verification | `firmware-tbctrl` |
+| verification | `debug-bughunting` |
+| implementation | `synthesis-impl` |
+| analog_digital_integration | `rnm-mixed-signal` |
 
-Stubs have complete frontmatter (discoverable) and a Sources list; their bodies
-are filled from those sources following the three full exemplars.
+All skills are written (When to use / Flow / Gotchas / Sources). Each `Sources`
+section lists the MSIC files it distills, so it can be verified/regenerated
+against the code as the flow evolves.
 
 ### Make skills invokable in a consuming project
 
