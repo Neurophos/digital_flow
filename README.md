@@ -36,7 +36,9 @@ the code.
 | design | `lint-jasper` |
 | design | `cdc-jasper` |
 | verification | `simulation-xcelium` |
-| verification | `uvm-methodology` |
+| verification | `uvm-system-level` — top/system TB (verif/uvm) + full-chip RNM (verif/model) |
+| verification | `uvm-block-level` — block unit TB (design/`<blk>`/uvm; template pf_ed) |
+| verification | `formal-verification` — JasperGold block formal (design/`<blk>`/formal) |
 | verification | `regression-parallel` |
 | verification | `coverage-closure` |
 | verification | `firmware-tbctrl` |
