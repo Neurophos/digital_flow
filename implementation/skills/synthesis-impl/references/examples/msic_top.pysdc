@@ -1,0 +1,355 @@
+# ####################################################################################################
+# SDC constraints for MSIC_TOP to be pre-processed by prepro before use. 
+#
+# The embedded python in this file will read the msic_pin_list.ods file which is used as the golden ref
+#   for all the pins, and I/O level coonstraints.  
+# From this spreadsheet, the python will do the following: 
+# - Groups are made of the signals based on the 'group' column in the spreadsheet. 
+# - Clocks are created if there is an entry within the 
+#   and input and output constraints. 
+# ####################################################################################################
+
+
+/* py-begin
+
+import sys, string, yaml, os
+import soc_pylib.read_sysinfo as rsi
+import soc_pylib.read_pinout as rpo
+info = rsi.MsicSysInfo()
+rsi.read_sysinfo(info)
+digital_groups = ["DIGIO", "DIG_BOOTMODE", "DIG_POR", "DIG_CLK", "DIG_FABIO_T2C_SIGNAL", "DIG_FABIO_T2C_CLK",\
+                    "DIG_FABIO_C2T_SIGNAL", "DIG_FABIO_C2T_CLK", "DIG_QSPI_SIGNAL", "DIG_QSPI_CLK", "DIG_JTAG_CLK",\
+                    "DIG_JTAG_SIGNAL", "DIG_GPIO", "DIG_UART_SIGNAL" ] 
+
+# Read the pin spreadsheet
+pinlist = rpo.MsicPinList()
+rpo.read_pin_list(pinlist)
+# init dict for groups and pins in group
+pgroups = {}
+digio_pins = 0;
+
+for p in pinlist.pins:
+    # create dict for groups and pins in group, separate by inputs and outputs and ios 
+
+    if p.group not in pgroups:
+        pgroups[p.group] = []
+    pgroups[p.group].append(p.pad_name)
+
+ 
+############################################
+# Define port groups for constraint generation. The port groups are defined in the spreadsheet and read in by the python code above.
+
+############################################
+for g in pgroups:
+        print(f"set  [ get_ports {{ ") 
+        for p in pgroups[g]:
+            print(f"    {p} \\")
+        print(f"    }} ] [get_ports -group {g}]")
+
+# Iterate through all the pins, and create a clock if the clk_freq is defined. Append the clkname to the list 'clks'  
+clks = []
+output_clks = {}
+
+for p in pinlist.pins:
+    if p.clk_freq != "":
+        # For output clocks, define a virtual clock name with _vclk instead of _clk and use this for the output timing. 
+        if (p.dir == "O"):
+            # substitute _vclk for _clk in the signal name to generate the clock name. 
+            vclk_name = p.core_nonpio_name.replace("_clk", "_vclk") 
+            clk_name = p.core_nonpio_name
+            clks.append(vclk_name)
+            clks.append(clk_name)
+            # Set the relationship for the clock names in the output_clks dict item. 
+            output_clks[clk_name] = vclk_name
+            # Create the clocks 
+            print(f"create_clock -name {clk_name} -period {(1000/float(p.clk_freq)):.3} [get_pins {p.clk_src}]")
+            print(f"create_generated_clock -name {vclk_name} -source {clk_name} [get_ports {p.pad_name}]")
+        elif (p.dir == "I"):
+            clk_name = p.core_nonpio_name
+            clks.append(clk_name)
+            print(f"create_clock -name {clk_name} -period {(1000/float(p.clk_freq)):.3} [get_ports {p.pad_name}]")
+
+py-end */ 
+
+
+############################################
+# Define some variables
+############################################
+set ARM_CLK_PERIOD              5.0;                            # 200MHz
+set JTAG_CLK_PERIOD             10.0;                           # 100MHz
+set DAC_CLK_PERIOD              1.0;                            # 1GHz
+set DAC_CLK_DIV2_PERIOD         [expr {$DAC_CLK_PERIOD * 2}];   # 500MHz
+
+# Set the clock uncertainties based on synthesis vs. P&R
+if { $IMPL_STEP == "SYN" } {
+    set ARM_CLK_SETUP_UNCERTAINTY       [expr 0.15 * $ARM_CLK_PERIOD]
+    set ARM_CLK_HOLD_UNCERTAINTY        [expr 0.1  * $ARM_CLK_PERIOD]
+    
+    set JTAG_CLK_SETUP_UNCERTAINTY      [expr 0.1  * $JTAG_CLK_PERIOD]
+    set JTAG_CLK_HOLD_UNCERTAINTY       [expr 0.1  * $JTAG_CLK_PERIOD]
+    
+    set DAC_CLK_SETUP_UNCERTAINTY       [expr 0.15 * $DAC_CLK_PERIOD]
+    set DAC_CLK_HOLD_UNCERTAINTY        [expr 0.1  * $DAC_CLK_PERIOD]
+    
+    set DAC_CLK_DIV2_SETUP_UNCERTAINTY   [expr 0.15 * $DAC_CLK_PERIOD]
+    set DAC_CLK_DIV2_HOLD_UNCERTAINTY    [expr 0.1  * $DAC_CLK_PERIOD]
+} else { 
+    set ARM_CLK_SETUP_UNCERTAINTY       [expr 0.15 * $ARM_CLK_PERIOD]
+    set ARM_CLK_HOLD_UNCERTAINTY        0.1
+    
+    set JTAG_CLK_SETUP_UNCERTAINTY      [expr 0.1  * $JTAG_CLK_PERIOD]
+    set JTAG_CLK_HOLD_UNCERTAINTY       0.1
+    
+    set DAC_CLK_SETUP_UNCERTAINTY       [expr 0.15 * $DAC_CLK_PERIOD]
+    set DAC_CLK_HOLD_UNCERTAINTY        0.1
+    
+    set DAC_CLK_DIV2_SETUP_UNCERTAINTY  [expr 0.15 * $DAC_CLK_PERIOD]
+    set DAC_CLK_DIV2_HOLD_UNCERTAINTY   0.1
+}
+
+set ARM_CLK_SOURCE              [get_ports {chip_clk_i}]
+set JTAG_CLK_SOURCE             [get_ports {m0_jtck_i}]
+set DAC_CLK_SOURCE              [get_pins -hier {u_clock_ctrl/u_PLLTS22ULPLJFRACB_dont_touch/FOUT2}]
+set DAC_CLK_DIV2_SOURCE         [get_pins -hier {u_clock_ctrl/u_dac_clk_div2/u_ckb_size_only/Z}]
+
+
+############################################
+# Define the clocks
+############################################
+create_clock -name chip_clk     -domain arm_clk_domain   -period $ARM_CLK_PERIOD       $ARM_CLK_SOURCE
+create_clock -name m0_jtck      -domain jtag_clk_domain  -period $JTAG_CLK_PERIOD      $JTAG_CLK_SOURCE
+create_clock -name dac_clk      -domain dac_clk_domain   -period $DAC_CLK_PERIOD       $DAC_CLK_SOURCE
+create_clock -name dac_clk_div2 -domain dac_clk_domain   -period $DAC_CLK_DIV2_PERIOD  $DAC_CLK_DIV2_SOURCE
+
+# Not currently available (may not need to be)
+# create_clock -name pll_refclk_o  -period 10.0 pll_refclk_o
+
+# The following is not necessary when using the -domain option for create_clock commands
+# set_clock_groups -asynchronous -group {chip_clk} -group {m0_jtck} -group {dac_clk}
+
+
+############################################
+# Define the clock uncertainty
+############################################
+set_clock_uncertainty $ARM_CLK_SETUP_UNCERTAINTY       -setup chip_clk
+set_clock_uncertainty $ARM_CLK_HOLD_UNCERTAINTY        -hold  chip_clk
+
+set_clock_uncertainty $JTAG_CLK_SETUP_UNCERTAINTY      -setup m0_jtck
+set_clock_uncertainty $JTAG_CLK_HOLD_UNCERTAINTY       -hold  m0_jtck
+
+set_clock_uncertainty $DAC_CLK_SETUP_UNCERTAINTY       -setup dac_clk
+set_clock_uncertainty $DAC_CLK_HOLD_UNCERTAINTY        -hold  dac_clk
+
+set_clock_uncertainty $DAC_CLK_DIV2_SETUP_UNCERTAINTY  -setup dac_clk_div2
+set_clock_uncertainty $DAC_CLK_DIV2_HOLD_UNCERTAINTY   -hold  dac_clk_div2
+
+
+############################################
+# Set timing derates (per Kumar)
+############################################
+set_timing_derate -cell_delay -late 1.1
+set_timing_derate -cell_delay -early 0.9
+
+set_timing_derate -net_delay -late 1.1
+set_timing_derate -net_delay -early 0.9
+
+
+############################################
+# Define input / output delays
+############################################
+foreach_in_collection const_input_port $const_inputs \
+    { set_false_path -from  $const_input_port }
+
+foreach_in_collection port $jtag_inputs \
+    { set_input_delay  [expr 0.6 * $JTAG_CLK_PERIOD] -clock m0_jtck [get_ports $port] }
+
+foreach_in_collection port $jtag_outputs \
+    { set_output_delay  [expr 0.6 * $JTAG_CLK_PERIOD] -clock m0_jtck -clock_fall [get_ports $port] }
+
+# foreach_in_collection port $uart_inputs \
+#     { set_input_delay  [expr 0.6 * $ARM_CLK_PERIOD] -clock chip_clk [get_ports $port] }
+# 
+# foreach_in_collection port $uart_outputs \
+#     { set_output_delay  [expr 0.6 * $ARM_CLK_PERIOD] -clock chip_clk [get_ports $port] }
+# 
+foreach_in_collection port $gpio_inputs \
+    { set_input_delay  [expr 0.6 * $ARM_CLK_PERIOD] -clock chip_clk [get_ports $port] }
+
+foreach_in_collection port $gpio_outputs \
+    { set_output_delay  [expr 0.6 * $ARM_CLK_PERIOD] -clock chip_clk [get_ports $port] }
+
+# foreach_in_collection port $other_hclk_outputs \
+#     { set_output_delay  [expr 0.6 * $ARM_CLK_PERIOD] -clock chip_clk [get_ports $port] }
+
+
+############################################
+# I/O data false paths
+############################################
+foreach_in_collection port $gpio_inputs \
+    { set_false_path -from [get_ports $port] }
+
+foreach_in_collection port $gpio_outputs \
+    { set_false_path -to [get_ports $port] }
+
+set_false_path -through [get_pins -hier *u_m0_gpio_*/pad_io/IE]
+set_false_path -through [get_pins -hier *u_chip_spare_pad*/pad_io/IE]
+
+# The clock is sampled, but that doesn't need to be timed
+set_false_path -through u_pad_top/u_chip_clk/pad_i/C
+
+# UART inputs and outputs are async to clock
+foreach_in_collection port $uart_inputs \
+    { set_false_path -from [get_ports $port] }
+
+foreach_in_collection port $uart_outputs \
+    { set_false_path -to [get_ports $port] }
+
+
+############################################
+# Other constraints (need to review with ACL)
+############################################
+set_max_transition   0.25   [current_design]
+set_clock_transition 0.1    [all_clocks]
+
+set_max_transition -data_path 0.250 [all_clocks]
+
+set_input_transition 0.1  -max [filter_collection [all_inputs] "direction == in"]
+set_input_transition 0.01 -min [filter_collection [all_inputs] "direction == in"]
+
+# Load units are pF
+set_load 0.010 [get_ports [all_outputs]]
+
+
+############################################
+# Memory Margin Trim constraints - need to 
+#    set a correct default value for impl
+#    timing to be done correctly
+############################################
+# ARM M0+ SRAM
+set_case_analysis 0 [ get_pins -hier u_ahb_sram/*/EMA[2] ]
+set_case_analysis 1 [ get_pins -hier u_ahb_sram/*/EMA[1] ]
+set_case_analysis 0 [ get_pins -hier u_ahb_sram/*/EMA[0] ]
+
+set_case_analysis 0 [ get_pins -hier u_ahb_sram/*/EMAW[1] ]
+set_case_analysis 0 [ get_pins -hier u_ahb_sram/*/EMAW[0] ]
+
+set_case_analysis 0 [ get_pins -hier u_ahb_sram/*/EMAS ]
+
+set_false_path -to [ get_pins -hier u_ahb_sram/*/EMA[*] ]
+set_false_path -to [ get_pins -hier u_ahb_sram/*/EMAW[*] ]
+set_false_path -to [ get_pins -hier u_ahb_sram/*/EMAS ]
+
+# ARM M0+ ROM
+set_case_analysis 0 [ get_pins -hier u_ahb_rom/*/EMA[2] ]
+set_case_analysis 1 [ get_pins -hier u_ahb_rom/*/EMA[1] ]
+set_case_analysis 0 [ get_pins -hier u_ahb_rom/*/EMA[0] ]
+
+set_false_path -to [ get_pins -hier u_ahb_rom/*/EMA[*] ]
+
+# DAC Dual-Port SRAMs
+set_case_analysis 0 [ get_pins -hier *u_dac_sram*/EMAA[2] ]
+set_case_analysis 1 [ get_pins -hier *u_dac_sram*/EMAA[1] ]
+set_case_analysis 1 [ get_pins -hier *u_dac_sram*/EMAA[0] ]
+
+set_false_path -to [ get_pins -hier *u_dac_sram*/EMAA[*] ]
+
+set_case_analysis 1 [ get_pins -hier *u_dac_sram*/EMAWA[1] ]
+set_case_analysis 0 [ get_pins -hier *u_dac_sram*/EMAWA[0] ]
+
+set_false_path -to  [ get_pins -hier *u_dac_sram*/EMAWA[*] ]
+
+set_case_analysis 0 [ get_pins -hier *u_dac_sram*/EMASA ]
+
+set_false_path -to [ get_pins -hier *u_dac_sram*/EMASA ]
+
+set_case_analysis 0 [ get_pins -hier *u_dac_sram*/EMAB[2] ]
+set_case_analysis 1 [ get_pins -hier *u_dac_sram*/EMAB[1] ]
+set_case_analysis 1 [ get_pins -hier *u_dac_sram*/EMAB[0] ]
+
+set_false_path -to  [ get_pins -hier *u_dac_sram*/EMAB[*] ]
+
+set_case_analysis 1 [ get_pins -hier *u_dac_sram*/EMAWB[1] ]
+set_case_analysis 0 [ get_pins -hier *u_dac_sram*/EMAWB[0] ]
+
+set_false_path -to  [ get_pins -hier *u_dac_sram*/EMAWB[*] ]
+
+set_case_analysis 0 [ get_pins -hier *u_dac_sram*/EMASB ]
+
+set_false_path -to  [ get_pins -hier *u_dac_sram*/EMASB ]
+
+
+############################################
+# AnaTop Module port constraints (not 
+#   defined in .lib file)
+############################################
+# Define the DAC min and max load values (in fF)
+
+# DSP / KUMAR : changing per Yanning 10/18/24
+# set ANATOP_DAC_IN_PORT_MAX_LOAD     8.33;
+# set ANATOP_DAC_IN_PORT_MIN_LOAD     0.73;
+
+set ANATOP_DAC_IN_PORT_MAX_LOAD     59.2;
+set ANATOP_DAC_IN_PORT_MIN_LOAD     35;
+
+# Capture a list of the DAC data inputs
+set dac_data_inputs [ get_db [get_db hinsts *anatop] .hpins */dac* -if {.direction == "in"}]
+
+
+# Define the ROW driver min and max load values (in fF)
+set ANATOP_ROW_IN_PORT_MAX_LOAD     4.83;
+set ANATOP_ROW_IN_PORT_MIN_LOAD     0.70;
+
+# Capture a list of the row-driver inputs
+set row_driver_inputs [ get_db [get_db hinsts *anatop] .hpins -regexp .*row_en* -if {.direction == "in"}]
+
+# Define the static input min and max load values (in fF)
+# set ANATOP_STATIC_IN_PORT_MAX_LOAD     4.94;
+# set ANATOP_STATIC_IN_PORT_MIN_LOAD     0.80;
+
+# DSP / KUMAR : changing per Yanning 10/18/24
+set ANATOP_STATIC_IN_PORT_MAX_LOAD     10;
+set ANATOP_STATIC_IN_PORT_MIN_LOAD     4;
+
+# Capture a list of the static inputs to the anatop
+set anatop_static_inputs [ get_pins { \
+        u_digital_top/u_dac_subsystem/u_anatop/tsel* \
+        u_digital_top/u_dac_subsystem/u_anatop/cm_stat* \
+        u_digital_top/u_dac_subsystem/u_anatop/lc_rst* \
+        u_digital_top/u_dac_subsystem/u_anatop/rdly* \
+        } -filter "direction==in" ]
+
+# The Row driver signals to the anatop pass through a programmable delay
+#   structure. To prevent timing through the longest path in Tempus, 
+#   set case analysis of the muxes to select the fastest path
+set_case_analysis 0 [get_pins u_digital_top/u_dac_subsystem/u_delay_*_dont_touch/u_ni_mux4/u_mux4_size_only/S*]
+
+
+# all digital signals at AnaTop are inputs
+#   the constraint needs to define mix and max delays from the source flops
+
+foreach_in_collection pin $dac_data_inputs { 
+    set_load -max $ANATOP_DAC_IN_PORT_MAX_LOAD { get_pins $pin }
+    set_load -min $ANATOP_DAC_IN_PORT_MIN_LOAD { get_pins $pin }
+}
+set_max_delay 0.5 -from [get_pins -hier u_digital_top/u_dac_subsystem/*dac*_reg/Q*]  \
+    -to [ get_db [get_db hinsts *anatop] .hpins */dac* -if {.direction == "in"}]
+
+
+foreach_in_collection pin $row_driver_inputs {
+    set_load -max $ANATOP_ROW_IN_PORT_MAX_LOAD { get_pins $pin } 
+    set_load -min $ANATOP_ROW_IN_PORT_MIN_LOAD { get_pins $pin }
+}
+
+set_max_delay 0.250 -from [get_pins -hier row_flopped_reg[*]/Q*] \
+    -to [ get_db [get_db hinsts *anatop] .hpins -regexp .*row_en* -if {.direction == "in"}]
+
+# set_min_delay 0.1 -from [get_pins -hier row_flopped_reg[*]/Q*] \
+#     -to [ get_db [get_db hinsts *anatop] .hpins -regexp .*row_en* -if {.direction == "in"}]
+
+
+foreach_in_collection pin $anatop_static_inputs {
+    set_max_delay 0.1 -to [get_pins $pin ]
+    set_load -max $ANATOP_STATIC_IN_PORT_MAX_LOAD { get_pins $pin }
+    set_load -min $ANATOP_STATIC_IN_PORT_MIN_LOAD { get_pins $pin }
+}
+

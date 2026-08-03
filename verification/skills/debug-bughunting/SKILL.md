@@ -52,6 +52,13 @@ Every confirmed finding → the project's `rtl_bugs_found_in_verification.md`
 `verif/uvm/verisium_migration.md`. Fix bugs in the `.pysv` source when the `.sv`
 is generated.
 
-## Sources (MSIC)
-`doc/rtl_bugs_found_in_verification.md`, `verif/uvm/verisium_migration.md`,
-`verif/uvm/run_regression.sh` (`evaluate_log`), Makefile VCD probes.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/rtl_bugs_found_in_verification.md`
+  - `references/verisium_migration.md`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

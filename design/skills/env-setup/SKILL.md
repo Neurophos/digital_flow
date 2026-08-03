@@ -30,9 +30,16 @@ import error.
   export MDV_XLM_HOME=/tools/cadence/xcelium/25.09.001
   ```
   else `*E,coverage_engine_lib.not_found_env`.
+- **Internal tool installs** — the large Neurophos toolchains are installed on
+  disk and pinned by version, like the EDA tools (referenced, not bundled). Point
+  at them via versioned env vars, **TBD**:
+  ```bash
+  export REGTOOLS_HOME=/tools/neurophos/regtools/<version>        # reggen/topgen (registers-regtool)
+  export IPXACT2HJSON_HOME=/tools/neurophos/ipxact2hjson/<version>
+  ```
 - **Workspace / chip** — `ROOT_DIR := $(git rev-parse --show-toplevel)/` anchors
-  every Makefile; `utils/chip_utils/scripts/which_chip.pl` resolves the active chip
-  from `ROOT_DIR`; `Makefile.ws` sets workspace paths.
+  every Makefile; `scripts/which_chip.pl` resolves the active chip from `ROOT_DIR`;
+  `scripts/Makefile.ws` sets workspace paths.
 
 ## Gotchas
 - Module state and env vars do **not** persist across background/detached shells —
@@ -40,8 +47,17 @@ import error.
 - Path convention: `/projects/<soc>/<soc_rev>/users/<unix_id>/`.
 - EDA tools exist only in the Neurophos compute environment.
 
-## Sources (MSIC)
-`utils/tool_setup/{cadence_setup,arm_setup}.make`, `activate_venv.sh`,
-`scripts/venv`, `scripts/requirements.txt`,
-`utils/chip_utils/scripts/which_chip.pl`, `utils/chip_utils/config/Makefile.ws`,
-`utils/chip_utils/config/Makefile.common` (ROOT_DIR).
+## Bundled here (self-contained — no external workspace paths)
+
+  - `scripts/activate_venv.sh`
+  - `scripts/arm_setup.make`
+  - `scripts/cadence_setup.make`
+  - `scripts/Makefile.ws`
+  - `scripts/requirements.txt`
+  - `scripts/which_chip.pl`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

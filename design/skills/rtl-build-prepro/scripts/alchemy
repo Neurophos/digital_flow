@@ -1,0 +1,1411 @@
+#!/usr/bin/env perl
+
+### #!/home/bcope/bin/perl.5.38.2/bin/perl -w
+use strict;
+use File::Basename;
+use Data::Dumper;
+use Scalar::Util    qw/ readonly blessed /;
+use Cwd             qw/ cwd realpath /;
+use List::MoreUtils qw/ uniq         /;
+use YAML::XS        qw/ LoadFile     /;
+
+local $YAML::XS::Boolean = "JSON::PP";
+
+# To add support for a new output:
+# - update %Modes;
+# - update usage();
+# - add output_<mode>() sub
+
+# Useful documentation:
+# - Product Manuals - Genus Synthesis Flows Guide NN.N - Reading Designs in Simulation Environment
+
+# ---------------------------------------------------------------------------- #
+
+my %Modes = ( # yaml_type 
+   dump =>  { design => 1, tb => 1, tech => 1 },
+   sim  =>  { design => 1, tb => 1, tech => 0 },
+   regs =>  { design => 1, tb => 1, tech => 0 },
+   syn  =>  { design => 1, tb => 0, tech => 0 },
+   lef  =>  { design => 1, tb => 0, tech => 0 },
+   gds  =>  { design => 1, tb => 0, tech => 0 },
+   cdl  =>  { design => 1, tb => 0, tech => 0 },
+   mmmc =>  { design => 1, tb => 0, tech => 0 },
+);
+
+# ---------------------------------------------------------------------------- #
+sub usage {
+    my $err = shift;
+    print <<EOH;
+================================================================================
+\$ alchemy [switches]                        (A-HiErarchical-Manifest/YAML tool)
+
+Input Files                                        (>=1 required; read in order)
++------------------------------------------------------------------------------+
+| (-yaml <file>)...  Top-level YAML(s) to process                              |
++------------------------------------------------------------------------------+
+
+Options
++------------------------------------------------------------------------------+
+| -top  <name>       Set top entity  (default: top_module|default_tb from YAML)|
+| -lib  <name>       Set cell library             (default: use_libs from YAML)|
+|                      (may be space-separated string; first sets tlef)        |
+| -ws   <dir>        Use <dir> for path detection               (default: \$PWD)|
+| -var  <var>        Prefix "\$<var>/" for rel paths in output     (default: WS)| 
+|                      (auto-sets to "" (no-prefix) for any STDOUT output)     |
++------------------------------------------------------------------------------+
+
+Output generation                    (>=1 required; any 1 may be "-" for STDOUT)
++------------------------------------------------------------------------------+
+| -sim  <sim.f>      Simulation RTL manifest (+ *_sim_only*, - *_syn_only)     |
+| -syn  <syn.f>      Synthesis RTL manifest  (+ *_syn_only*, - *_sim_only)     |
+| -mmmc <mmmc.tcl>   Cadence Stylus Multi-Mode-Multi-Corner Tcl                |
+| -lef  <lef.f>      LEF manifest (first entry is .tlef (technology-LEF))      |
+| -gds  <gds.f>      GDS manifest                                              |
+| -cdl  <cdl.f>      CDL manifest                                              |
+| -regs <dirs.f>     Dirs in which to run regtool (via 'make'; see example)    |
+| -dump <out.pl>     Perl dump of all YAML data (-top ignored)                 |
++------------------------------------------------------------------------------+
+
+Behavior flags
++------------------------------------------------------------------------------+
+| -check             Parse, validate YAML(s), exit (ignore output selection(s))|
+| -quiet             Suppress INFO and WARNING (but still ERROR if needed)     |
+| -keep              Output any MISSING paths as normal        (default: abort)|
+| -drop              Remove any MISSING paths from output      (default: abort)|
+| -abs               Output all absolute paths (default: use "\$<var>/" prefix) |
++------------------------------------------------------------------------------+
+
+examples:
+\$ alchemy -yaml design/chip_top/config/chip_top.yaml -check
+\$ alchemy -yaml config/block.yaml -top block -rtl run.f
+\$ alchemy -yaml design/core/config/core.yaml -syn genus.f 
+\$ alchemy -yaml zz.yaml -quiet -regs - | while read d ; do make -C \$d ; done
+\$ alchemy -yaml \$IP_DIR/config/foo.yaml -syn syn.f -lef lef.f -mmmc mmmc.tcl
+================================================================================
+
+EOH
+    die "ERROR: $err\n" if $err;
+    exit;
+}
+# ---------------------------------------------------------------------------- #
+# YAML Schema Schema / Field Attributes
+#
+# type     => <type>              : required: enum|string|file|dir|find
+#   values => <name(s)>           : for type=enum, list of valid values
+#   unique => 1|0                 : for type=file, warn if not unique leafname
+#   glob   => [                   : for type=dir, pairs of fields and
+#      (<field> => <pat>)...          glob patterns to fill with
+#   ]
+#   search  => [                  : for type=find, if not a file (but is a dir),
+#      <suffix>...                     a list of paths to try to find a file
+#   ]                                  If no match, immediately fatal (because
+#                                      used for sub-YAML detection)
+#
+# ref      => <REFTYPE>           : SCHEMA  = <field> is a new schema level
+#                                   HASH    = <field> is a  hash  of string|file|dir
+#                                   HASHARR = <field> is a  hash  of 
+#                                                        an array of string|file|dir
+#                                   ARRAY   = <field> is an array of string|file|dir
+#
+# need     => opt|req             : required for all fields (or, if group, 
+#                                      must set on at least 1 member) 
+#   if     => <condition>         :   modify <need> of field/group
+#
+#                                     ["eq",  "<field>", "<value>"]
+#                                     ["ne",  "<field>", "<value>"]
+#                                     ["set", "<field|group>"]
+#                                     ["not", "<field|group>"]
+#
+# group    => <group-name>        : mark field as belonging to a group
+#   count  => N|all|any           : for group, configure behaviour
+#                                     (must set on at least 1 member)
+#                                      
+#                                                         need
+#                                                       req  opt
+#                                     all : all members must may be set
+#                                     any : any members must may be set
+#                                     <N> : <N> members must may be set
+# 
+# deprecated => <message>           : if used, warn with <message>
+# ---------------------------------------------------------------------------- #
+
+my $Y_Schema = {
+      
+  FILE => {
+    # universal
+    yaml                => { type => "find",   ref => "ARRAY",                     need => "opt", 
+        search => [ # additive, so later matches add new fields OR override previous fields
+            "%DIR/config/%BASE.yaml",                           # base IP yaml
+            "utils/proj_utils/blocks/%BASE/config/%BASE.yaml",  # PD add-ons (ie, constraints:)
+            "utils/impl_utils/config/ext/%BASE.yaml",           # central yaml for 99% of external-IP
+            "utils/proj_utils/config/ext/%BASE.yaml",           # proj-specific yaml for 1% of external-IP
+        ] 
+    },
+                                                                                   
+    yaml_type           => { type => "enum",   values => [qw/design tech tb/],     need => "req", },
+                                               
+    # design                                                     
+    top_module          => { type => "string",                   group => "DReq",  need => "req",  count => "all", if => [qw/eq yaml_type design/],},
+    modules             => { type => "string", ref => "SCHEMA",  group => "DReq", },
+                                                                 
+    common              => { type => "string", ref => "SCHEMA",  group => "DOpt",  need => "opt",  count => "any", if => [qw/eq yaml_type design/],
+                                                                                   deprecated => "use hier yaml"},
+
+    ### Even this this is decrepated, removing it breaks the Schema check. The check looks
+    ### for at least 2 or more fields with a group of type DOpt. Without this, there is only
+    ### 1 field of that type, and the check fails. Could perhaps update the check...
+    defines_syn         => { type => "string", ref => "ARRAY",   group => "DOpt", }, # TODO: deprecate
+
+    # tb                                                         
+    default_tb          => { type => "string",                   group => "TB",    need => "req",  count => "all", if => [qw/eq yaml_type tb/    ],},
+    testbenches         => { type => "string", ref => "SCHEMA",  group => "TB",   },
+                                                                 
+    # tech                                                       
+    use_libs            => { type => "string",                   group => "TECH", need => "req",  count => "all",  if => [qw/eq yaml_type tech/  ],},
+    libraries           => { type => "string", ref => "SCHEMA",  group => "TECH", },
+    rc_corners          => { type => "string", ref => "SCHEMA",  group => "TECH", },
+    timing_conditions   => { type => "string", ref => "ARRAY",   group => "TECH", },
+    delay_corners       => { type => "string", ref => "SCHEMA",  group => "TECH", },
+  },                                           
+                                               
+  modules => {                                 
+    yaml                => { type => "file",                                       need => "opt",                        
+                                                                                   deprecated => "use yaml: array (at top of file)" },
+    path_remap          => { type => "string",                                     need => "opt",                        
+                                                                                   deprecated => "use yaml: array (at top of file)" },
+                                                                                   
+    defines_sim         => { type => "string", ref => "ARRAY",                     need => "opt", if => [set => "Data"],  },
+    defines_syn         => { type => "string", ref => "ARRAY",                     need => "opt", if => [set => "Data"],  },
+                                                                 
+    rtl                 => { type => "file",   ref => "ARRAY",   group => "Data", unique => 1, need => "req", if => [not => "yaml"],  count => "any", },
+    rtl_sim_only        => { type => "file",   ref => "ARRAY",   group => "Data", unique => 1,                                        },
+    rtl_syn_only        => { type => "file",   ref => "ARRAY",   group => "Data", unique => 1,                                        },
+    rtl_abs             => { type => "file",   ref => "ARRAY",   group => "Data", unique => 1, deprecated => "use rtl"                },
+    rtl_abs_sim_only    => { type => "file",   ref => "ARRAY",   group => "Data", unique => 1, deprecated => "use rtl_sim_only"       },
+    rtl_abs_syn_only    => { type => "file",   ref => "ARRAY",   group => "Data", unique => 1, deprecated => "use rtl_syn_only"       },
+    libdir              => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    libdir_sim_only     => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    libdir_syn_only     => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    libdir_abs          => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use libdir"             },
+    libdir_abs_sim_only => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use libdir_sim_only"    },
+    libdir_abs_syn_only => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use libdir_syn_only"    },
+    incdir              => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    incdir_sim_only     => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    incdir_syn_only     => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    incdir_abs          => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use incdir"             },
+    incdir_abs_sim_only => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use incdir_sim_only"    },
+    incdir_abs_syn_only => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use incdir_syn_only"    },
+    regs                => { type => "dir",    ref => "ARRAY",   group => "Data",  glob => [
+                                                                                       rtl => "rtl/*_reg_top.sv", 
+                                                                                       rtl => "rtl/*_apb_adapter_reg.sv",
+                                                                                  packages => "rtl/*_reg_pkg.sv", ]       },
+    packages            => { type => "file",   ref => "ARRAY",   group => "Data",                                         },
+    packages_abs        => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use packages"           },
+    interfaces          => { type => "file",   ref => "ARRAY",   group => "Data",                                         }, 
+    interfaces_abs      => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use interfaces"         }, 
+                                                                 
+    submodules          => { type => "string", ref => "ARRAY",   group => "Data",                                         },
+    submodules_sim_only => { type => "string", ref => "ARRAY",   group => "Data",                                         },
+                                                                 
+    gds                 => { type => "file",   ref => "ARRAY",   group => "Data",                                         },
+    cdl                 => { type => "file",   ref => "ARRAY",   group => "Data",                                         },
+    lef                 => { type => "file",   ref => "ARRAY",   group => "Data",                                         },
+    lib                 => { type => "file",   ref => "HASHARR", group => "Data",                                         },
+    socv                => { type => "file",   ref => "HASH",    group => "Data",                                         },
+  },                                                                                                                     
+
+  rc_corners => {
+    temperature         => { type => "string",                                     need => "req"                          },
+    qrc_tech_file       => { type => "file",                                       need => "req"                          },
+  },                                                                 
+                                                                     
+# TODO: make type=key                                                
+  delay_corners => {                                                 
+    timing_condition    => { type => "string",                                     need => "req"                          },
+    rc_corner           => { type => "string",                                     need => "req"                          },
+  },                                                                 
+                                                                     
+  libraries => {                                                     
+    tlef                => { type => "file",   ref => "ARRAY",                     need => "req"                          },
+    submodules          => { type => "string", ref => "ARRAY",                     need => "req"                          },
+  },
+                                                                                                                         
+  common => {                                                                                                            
+    rtl                 => { type => "file",   ref => "ARRAY",   group => "Data",  need => "req", count => "any",         },
+    rtl_sim_only        => { type => "file",   ref => "ARRAY",   group => "Data",                                         },
+    libdir              => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    libdir_sim_only     => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    incdir              => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    incdir_sim_only     => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+  },                                                                                                                      
+                                                                                                                          
+  testbenches => {                                                                                                        
+    defines_sim         => { type => "string", ref => "ARRAY",                     need => "opt"                          },
+    rtl                 => { type => "file",   ref => "ARRAY",   group => "Data",  need => "req", count => "any"          },
+    rtl_sim_only        => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use rtl"                },
+    rtl_abs             => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use rtl"                },
+    rtl_abs_sim_only    => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use rtl"                },
+    libdir              => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    libdir_sim_only     => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use libdir"             },
+    libdir_abs          => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use libdir"             },
+    libdir_abs_sim_only => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use libdir"             },
+    incdir              => { type => "dir",    ref => "ARRAY",   group => "Data",                                         },
+    incdir_sim_only     => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use incdir"             },
+    incdir_abs          => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use incdir"             },
+    incdir_abs_sim_only => { type => "dir",    ref => "ARRAY",   group => "Data",  deprecated => "use incdir"             },
+    regs                => { type => "dir",    ref => "ARRAY",   group => "Data",  glob => [
+                                                                                       rtl => "rtl/*_reg_top.sv", 
+                                                                                       rtl => "rtl/*_apb_adapter_reg.sv",
+                                                                                  packages => "rtl/*_reg_pkg.sv", ]       },
+    packages            => { type => "file",   ref => "ARRAY",   group => "Data",                                         },
+    packages_abs        => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use packages"           },
+    interfaces          => { type => "file",   ref => "ARRAY",   group => "Data",                                         }, 
+    interfaces_abs      => { type => "file",   ref => "ARRAY",   group => "Data",  deprecated => "use interfaces"         }, 
+  },
+};
+
+# ============================================================================ # Args
+
+@ARGV or usage();
+
+my @YAML;
+
+my %Ins   = (
+     top  => "",
+     lib  => "",
+      ws  => cwd(),
+     var  => "WS",
+);
+
+my %Flags = map { $_ => 0  } qw/ abs check drop keep quiet /;
+my %Outs;
+my %Missing;
+my %Already_Said;
+
+my $PWD = $Ins{ws}; 
+
+while (defined (my $arg = shift @ARGV)) {
+    if ($arg =~ /^-(\S+)/) {
+        if    ($1 eq "yaml")       { push @YAML,  realpath(chk_ifile($1, shift @ARGV)) }
+        elsif (defined $Modes{$1}) { $Outs{$1}  =          chk_ofile($1, shift @ARGV)  }
+        elsif (defined   $Ins{$1}) { $Ins{$1}   =                        shift @ARGV   }
+        elsif (defined $Flags{$1}) { $Flags{$1} = 1                                    }
+        else                       { usage("unrecognized option: \"$arg\"")            }
+    }   else                       { usage("unrecognized argument: \"$arg\"")          }
+}
+
+@YAML                                 or usage("must specify at least one -yaml"); 
+%Outs || $Flags{check}                or usage("must specify at least one -<mode> (or -check)");
+(grep {$_ eq "-"} values %Outs) <= 1  or usage("may only set one output to \"-\"");
+$Flags{drop}  && $Flags{keep}        and usage("may only specify -drop OR -keep");
+$Flags{check} && $Flags{quiet}       and usage("-quiet makes no sense with -check");
+
+if ($Ins{ws}) { 
+    -d    $Ins{ws}        or die "ERROR: -ws <dir> \"$Ins{ws}\" is not a directory\n";
+    chdir($Ins{ws})       or die "ERROR: couldn't cd to W/S dir \"$Ins{ws}\": $!\n";
+}
+
+my $Y_Spec = validate_schema($Y_Schema);
+
+# ---------------------------------------------------------------------------- # Input
+
+print STDERR "INFO: reading/processing YAML ...\n" unless $Flags{quiet};
+
+my $cfg = {
+    data => {}, 
+    seen => {}, 
+    top  => $Ins{top}, 
+    lib  => $Ins{lib}, 
+    type => "",
+};
+
+read_hier( $_, $cfg, "" ) foreach @YAML; 
+
+print STDERR "\n" unless $Flags{quiet};
+
+if (%Missing && $Flags{check}) {
+    print STDERR "INFO: missing path summary (may/may-not be problematic given -output/-top combo)\n",
+                 "      (use \"-ws <dir>\" to specify W/S, if that's the root issue)\n";
+    print STDERR "  - $_\n" foreach sort keys %Missing;
+    print STDERR "\n";
+}
+
+if ($Flags{check}) { 
+    print  STDERR "INFO: -check complete; exiting"; 
+    printf STDERR " (%s output skipped)", join("/", sort keys %Outs) if %Outs;
+    print  STDERR "\n";
+    exit;
+}
+
+# ---------------------------------------------------------------------------- # Output(s)
+
+chdir($PWD); # return to our original dir for output generation
+
+my $missing_msg = $Flags{keep} ? "kept" : "dropped";
+my $tot_missed  = 0;
+
+for my $type (sort keys %Outs) {
+
+    my $file = $Outs{$type};
+
+    if (!$Modes{$type}{$cfg->{type}}) {
+        printf STDERR "INFO: skipped   : %-6s => %s (invalid output for yaml_type=$cfg->{type})\n", $type, $file; 
+        next;
+    }
+
+    my ($fh, $num_missed);
+
+    if ($file eq "-") {
+        $fh = \*STDOUT;
+    } else {
+        open $fh, '>', $file or die "ERROR: Can't write \"$file\": $!\n";
+    }
+
+    { 
+        no strict 'refs'; 
+        $num_missed = &{"output_$type"}($fh, $cfg);
+        $tot_missed += $num_missed;
+    }
+
+    if (!$Flags{quiet}) {
+        if ($num_missed) {
+            printf STDERR "INFO: generated : %-6s => %s (%d missing path(s) %s)\n", $type, $file, $num_missed, $missing_msg;
+        } else {
+            printf STDERR "INFO: generated : %-6s => %s\n", $type, $file;
+        }
+    }
+
+    close $fh;
+}
+
+# ============================================================================ # Exit
+
+if ($tot_missed) {
+    if ($Flags{keep} || $Flags{drop}) {
+        if (!$Flags{quiet}) {
+            print STDERR "INFO: $tot_missed total NEEDED paths missing ($missing_msg) but -keep|-drop was specified; normal exit.\n";
+        }
+    } else {
+        print STDERR "\n",
+                     "ERROR: $tot_missed total NEEDED paths missing (listed in output file(s)); exiting -1\n",
+                     "       (rerun with \"-keep\" to keep them and proceed anyway (exit w/o error)\n",
+                     "       (rerun with \"-drop\" to drop paths and proceed anyway (exit w/o error)\n";
+        exit -1;        
+    }
+}
+
+exit;
+
+# ---------------------------------------------------------------------------- #
+sub a_die { 
+    my ($scope_ref, @msg) = @_;
+
+    my $scope = join("/", @$scope_ref) || "YAML-top";
+    
+    print STDERR "   ERROR: ($scope) ", shift @msg, "\n";
+    print STDERR "            $_\n"   foreach @msg; 
+    exit -1;
+}
+# ---------------------------------------------------------------------------- #
+sub a_warn { 
+    my ($scope_ref, @msg) = @_;
+
+    return if $Flags{quiet};
+
+    my $scope = join("/", @$scope_ref) || "YAML-top";
+    
+    print STDERR "   WARNING: ($scope) ", shift @msg, "\n";
+    print STDERR "              $_\n"   foreach @msg; 
+}
+# ---------------------------------------------------------------------------- #
+sub a_miss { 
+    my ($scope_ref, $msg, $path) = @_;
+
+    $Missing{$path}++;
+
+    return if $Flags{quiet};
+
+    my $scope = join("/", @$scope_ref) || "YAML-top";
+    
+    my $out  = " ! MISSING:";
+       $out .= " ($scope)";
+       $out .= " ($msg): $path";
+
+    print STDERR $out, "\n";
+}
+# ---------------------------------------------------------------------------- #
+sub validate_if {
+    my ($spec, $y, $if) = @_;
+
+    my ($reason, $result);
+
+    if ($if) {
+        if    ($if->[0] eq "eq")  { $reason = "(when $if->[1] == $if->[2]) "; $result = ($y->{ $if->[1] } || "") eq $if->[2] }
+        elsif ($if->[0] eq "ne")  { $reason = "(when $if->[1] != $if->[2]) "; $result = ($y->{ $if->[1] } || "") ne $if->[2] }
+        else {
+            if (exists $spec->{singles}{$if->[1]}) {
+                my $set = $y->{ $if->[1] } ? 1 : 0;
+                if ($if->[0] eq "set") { $reason = "(when field $if->[1] is set) ";       $result =  $set; }
+                else                   { $reason = "(when field $if->[1] is not set) ";   $result = !$set; }
+            } else {
+                my $set = 0;
+                for my $fn (@{$spec->{groups}{$if->[1]}{fields}}) { $set++ if $y->{$fn} }
+
+                if ($if->[0] eq "set") { $reason = "(when $if->[1] fields are set) ";     $result =  $set; }
+                else                   { $reason = "(when $if->[1] fields are not set) "; $result = !$set; }
+            }
+        }
+    } else {
+        $reason = "";
+        $result = 0;
+    }
+
+    return ($reason, $result);
+}
+# ---------------------------------------------------------------------------- #
+sub validate_item {
+    my ($scope, $val, $f) = @_;
+
+    if    ($f->{type} eq "enum")   { $f->{legal}{$val}          or a_warn($scope, "\"$val\" not in list (@{$f->{values}})"); }
+    elsif ($f->{type} eq "string") { defined $val && $val ne "" or a_warn($scope, "found empty string"); }
+}
+# ---------------------------------------------------------------------------- #
+{
+my %Leafs;
+sub validate_path {
+    my ($scope, $path, $f, $y_ref) = @_;
+
+    $path =~ s{//}{/}g;                       # trim redundant //
+    $path =~ s{/$}{};                         # lop off trailing /
+    $path =~ s{\$ [({]? (\w+) [})]?}{\$$1}gx; # normalize $A $(A) ${A} --> $A
+
+    # expanding embedded env vars for testing, but store UNexpanded, 
+    # deferring behaviour to ultimate consuming tool/flow (along with $WS, $BUILD, etc)
+
+    my $expanded = $path;
+
+    $expanded =~ s{
+        \$ (\w+) 
+    }{
+        if (exists $ENV{$1}) {
+            $ENV{$1};
+        } else {
+            a_warn($scope, "undefined ENV var: \$$1");
+            "\$$1";
+        }
+    }egx;
+
+    if ($f->{type} eq "file") { 
+
+        -f $expanded or a_miss($scope, "file", $path); 
+
+        if ($f->{unique}) {
+            my $leaf = basename($expanded);
+
+            my $prev;
+
+            if (($prev = $Leafs{$leaf}) && $prev ne $expanded) {
+                a_warn($scope, "non-unique leaf filenames may clash:", "prev: $prev", "this: $expanded");
+            }
+
+            $Leafs{$leaf} = $expanded;
+        }
+
+    } elsif ($f->{type} eq "dir") { 
+
+        -d $expanded or a_miss($scope, "dir",  $path); 
+
+        #-# orig behavior: auto-magic-globbing - glob fields were done first, and any matches 
+        #-# found pushed into the field (rtl: or packages:) without checking if they were listed
+        #-# explicitly or not (because duplicates are auto-removed). This is all deprecated now;
+        #-# we agreed we'd rather designers be explicit and list the files themselves
+        #-# 
+        #-# if ($f->{glob}) { 
+        #-#     my @do = @{$f->{glob}};  # make a copy to use with splice!
+        #-#     while (my ($field, $pattern) = splice (@do, 0, 2)) {
+        #-#         if (my @out = glob("$expanded/$pattern")) {
+        #-#             push @{$y_ref->{$field}}, @out;
+        #-#         } else {
+        #-#             a_miss($scope, "dir/glob matched nothing", "$path/$pattern");
+        #-#         }
+        #-#     }
+        #-# }
+        #-# 
+        #-# instead, as temp/transition measure, do the glob and just warn if it finds things that
+        #-# aren't present in the field
+
+        if ($f->{glob}) { 
+            my @do = @{$f->{glob}};  # make a copy to use with splice!
+            while (my ($field, $pattern) = splice (@do, 0, 2)) {
+                my %existing = map { $_ => 1 } @{$y_ref->{$field}};
+                for my $found (glob("$expanded/$pattern")) {
+                    next if $existing{$found};
+
+                    a_warn($scope, "deprecated auto-globbing spotted a file NOT in $field: (but should be?)", $found);
+                }
+            }
+        }
+
+    } elsif ($f->{type} eq "find") { 
+
+        if (-f $expanded) {
+            # no further checking, just use
+
+        } elsif (-d $expanded) {
+
+            my $base   = basename($expanded);
+            my @search = @{$f->{search}};  # make a copy to use with s//!
+            my $found;
+
+            for my $srch (@search) {
+                $srch =~ s/%DIR/$expanded/g;
+                $srch =~ s/%BASE/$base/g;
+                if (-f $srch) {
+                    $found = $srch;
+                    last;
+                }
+            }
+
+            $found or a_die($scope, "dir $path had no matches to search list:", @{$f->{search}});
+
+           #$path .= "/$found" ;
+            $path  = $found;
+
+        } else {
+
+            a_die($scope, "not a file AND not a dir (to anchor searches)", $path);
+        }
+    }
+
+    if ($path =~ m{^/}) {
+        a_warn($scope, "absolute path found; use (design/* ext/* verif/*) relative path instead:", $path); 
+    }
+
+    return $path;
+}}
+# ---------------------------------------------------------------------------- #
+sub expand_yaml {
+    my ($y_ref, $rename_ref) = @_;
+
+    my $ref_type = ref $y_ref or die "ERROR (expand_yaml) not a ref: $y_ref\n";
+
+    if ($ref_type eq "ARRAY") {
+
+        foreach (@$y_ref) {
+            if (ref $_) { 
+                expand_yaml($_, $rename_ref) ;
+            } else {
+                for my $from (keys %$rename_ref) {
+                    $_ =~ s/$from/$rename_ref->{$from}/g;
+                }
+            }
+        }
+
+    } elsif ($ref_type eq "HASH") {
+        
+        for my $orig (keys %$y_ref) {
+            my $name = $orig;
+
+            # rename key if possible:
+            for my $from (keys %$rename_ref) {
+                if ($name =~ s/$from/$rename_ref->{$from}/g) {
+                    $y_ref->{$name} = $y_ref->{$orig};
+                    delete $y_ref->{$orig};
+                }
+            }
+
+            if (my $ref = ref $y_ref->{$name}) {
+                # YAML booleans come in (because we said to) as blessed objects;
+                # don't try to expand them OR rename them:
+                if ($ref ne "JSON::PP::Boolean") {
+                    expand_yaml($y_ref->{$name}, $rename_ref);
+                }
+            } elsif ($y_ref->{$name}) {
+                # just a non-empty scalar value, try to apply renaming:
+                for my $from (keys %$rename_ref) {
+                    $y_ref->{$name} =~ s/$from/$rename_ref->{$from}/g;
+                }
+            }
+        }
+
+    } else {
+
+        die "ERROR (expand_yaml) unexpected ref \"$ref_type\"\n";
+    }
+}
+
+# ---------------------------------------------------------------------------- #
+sub validate_yaml {
+    my ($cfg, $y_ref, $spec_name, $s_path) = @_;
+
+    my $spec_ref = $Y_Spec->{$spec_name} or die "ERROR: schema \"$spec_name\" not found\n";
+    my @scope    = @$s_path;
+
+    #-#   This bit supported the  magic-auto-glob feature for regs to find files
+    #-#   and stuff into rtl: or packages: during validate_path.  Deprecating/removing!
+    #-#
+    #-#   # Pass 1 - check legality of fields that are set, sorting those with globs
+    #-#   #          to the beginning: since they may stuff data in *other* fields, that
+    #-#   #          needs to happen before we check those other fields
+    #-#
+    #-#   my @fields = map  { $_->[0] }
+    #-#                sort { $a->[1] <=> $b->[1] }  
+    #-#                map  { [$_, (exists $spec_ref->{defs}{$_} 
+    #-#                                 && $spec_ref->{defs}{$_}{glob}) ? 0 : 1] } 
+    #-#                keys %$y_ref;
+
+    my @fields    = keys %$y_ref;
+    my %path_type = map {$_ => 1} qw/ dir file find /;
+
+    # Pass 1 - check legality of fields that are set
+
+    for my $fn (@fields) {
+
+        my (@val, $f, $raw, $ref_raw, $sub);
+
+        if (!($f    = $spec_ref->{defs}{$fn})) {
+            if ($Y_Spec->{__ALL__}{$fn}) {        a_warn(\@scope, "field \"$fn\" not valid here; check indentation"); next }
+            else                         {        a_warn(\@scope, "ignoring unknown field: \"$fn\"");                 next }
+        }
+       
+        $raw     = $y_ref->{$fn};
+        defined $raw                           or                                                                  delete $y_ref->{$fn}, next; 
+        $ref_raw = ref $raw;                                                                                       
+                                                                                                                   
+        if ($f->{ref}) {                                                                                           
+            $ref_raw                           or a_warn(\@scope, "field \"$fn\" is not a $f->{ref} (deleted)"),   delete $y_ref->{$fn}, next;
+                                                                                                                   
+            if ($f->{ref} eq "SCHEMA") {                                                                           
+                $ref_raw eq "HASH"             or a_warn(\@scope, "field \"$fn\" is not a HASH (deleted)"),        delete $y_ref->{$fn}, next;
+                for my $sub (keys %$raw) {                                                                         
+                    my $sub_ref = $raw->{$sub};                                                                    
+                   ($_ = ref $sub_ref) &&                                                                          
+                    $_ eq "HASH"               or a_warn(\@scope, "field \"$fn/$sub\" is not a HASH (deleted)"),   delete $raw->{$sub},  next;
+                    validate_yaml($cfg, $sub_ref, $fn, [@scope, $fn, $sub]);                                       
+                }                                                                                                  
+
+            } elsif ($f->{ref} eq "HASH") {                                                                        
+                $ref_raw eq "HASH"             or a_warn(\@scope, "field \"$fn\" is not a HASH (deleted)"),        delete $y_ref->{$fn}, next;
+                for my $key (keys %$raw) { 
+                    ref $raw->{$key}          and a_warn(\@scope, "field \"$fn/$key\" is a REF (deleted)"),        delete $raw->{$key},  next;
+                }
+                values %$raw                   or a_warn(\@scope, "field \"$fn\" is empty HASH (deleted)"),        delete $y_ref->{$fn}, next;
+
+                if ($path_type{$f->{type}}) { $raw->{$_}       =        validate_path( [@scope, $fn, $_], $raw->{$_}, $f, $y_ref) foreach keys %$raw }
+                else                        {                           validate_item( [@scope, $fn],            $_,  $f)         foreach       @val }
+
+            } elsif ($f->{ref} eq "HASHARR") {
+                $ref_raw eq "HASH"             or a_warn(\@scope, "field \"$fn\" is not a HASH (deleted)"),        delete $y_ref->{$fn}, next;
+                keys   %$raw                   or a_warn(\@scope, "field \"$fn\" is empty HASH (deleted)"),        delete $y_ref->{$fn}, next;
+                for my $key (keys %$raw) { 
+                    my $sub_ref = $raw->{$key};
+                   ($_ = ref $sub_ref) && 
+                    $_ eq "ARRAY"              or a_warn(\@scope, "field \"$fn/$key\" is not an ARRAY (deleted)"), delete $raw->{$key},  next;
+                    @val = @$sub_ref           or a_warn(\@scope, "field \"$fn/$key\" is empty ARRAY (deleted)"),  delete $raw->{$key},  next;
+
+                    if ($path_type{$f->{type}}) { $raw->{$key} = [map { validate_path( [@scope, $fn, $key], $_, $f, $y_ref) }             @val] }
+                    else                        {                       validate_item( [@scope, $fn, $key], $_, $f)         foreach       @val }
+                }
+            } else {
+                $ref_raw eq "ARRAY"            or a_warn(\@scope, "field \"$fn\" is not a ARRAY (deleted)"),       delete $y_ref->{$fn}, next;
+                @val = @$raw                   or a_warn(\@scope, "field \"$fn\" is empty ARRAY (deleted)"),       delete $y_ref->{$fn}, next;
+
+                if ($path_type{$f->{type}}) { $y_ref->{$fn}    = [map { validate_path( [@scope, $fn],       $_, $f, $y_ref) }             @val] }
+                else                        {                           validate_item( [@scope, $fn],       $_, $f)         foreach       @val  }
+            }
+        } else {
+            $ref_raw                          and a_warn(\@scope, "field \"$fn\" can't be $ref_raw (deleted)"),    delete $y_ref->{$fn}, next;
+            if ($path_type{$f->{type}})     { $y_ref->{$fn}    =        validate_path( [@scope, $fn],     $raw, $f, $y_ref) }
+            else                            {                           validate_item( [@scope, $fn],     $raw, $f)         }
+        }
+
+        a_warn(\@scope, "field \"$fn\" is deprecated ($_)") if $_ = $f->{deprecated};
+    }
+
+    # Pass 2 - check need
+
+    for my $fn  (keys %{$spec_ref->{singles}}) {
+        my $f    = $spec_ref->{defs}{$fn};
+
+        my ($reason, $if_applies) = validate_if($spec_ref, $y_ref, $f->{if});
+
+        if (!$f->{if} || $if_applies) {
+            if ($f->{need} eq "req") { defined $y_ref->{$fn}  or a_warn(\@scope, $reason . "required field isn't set: \"$fn\""), die Dumper($y_ref), "\n"; }
+        } else {
+                                       defined $y_ref->{$fn} and a_warn(\@scope, $reason . "not legal to set field: \"$fn\"");
+        }
+    }
+
+    for my $gn (keys %{$spec_ref->{groups}}) {
+        my $g     =    $spec_ref->{groups}{$gn};
+        my $need  = $g->{need};
+        my @fld   = @{$g->{fields}};
+        my @set   = grep { $y_ref->{$_} } @fld;
+
+        my ($reason, $if_applies) = validate_if($spec_ref, $y_ref, $g->{if});
+
+        if (!$g->{if} || $if_applies) {
+
+            if (@set) {
+                if    ($g->{count} eq "all") {        @set == @fld or a_warn(\@scope, $reason . "not all fields in group \"$gn\" are set: (@fld)"            ) }
+                elsif ($g->{count} ne "any") { $g->{count} == @fld or a_warn(\@scope, $reason . "must set ==$g->{count} field(s) in group \"$gn\": (@fld)") }
+            } elsif ($need eq "req") {                                                        
+                if    ($g->{count} eq "any") {                        a_warn(\@scope, $reason . "must set >=1 field(s) in group \"$gn\": (@fld)"          ) }
+                else                         {                        a_warn(\@scope, $reason . "must set ==$g->{count} field(s) in group: (@fld)") }
+            }
+        } else {
+            for my $fn (@fld)                {      $y_ref->{$fn} and a_warn(\@scope, $reason . "not legal to set field: \"$fn\""); }
+        }
+    }
+}
+# ---------------------------------------------------------------------------- #
+sub read_hier {
+    my ($yaml_file, $cfg, $parent_type) = @_;
+
+    -f $yaml_file or die "ERROR: specified YAML is not a valid file: \"$yaml_file\"\n";
+    -r _          or die "ERROR: no permissions to read YAML: \"$yaml_file\"\n";
+
+    return if $cfg->{seen}{$yaml_file}++;
+
+    my  $yaml_base   = fileparse($yaml_file, qr/\.yaml$/i);
+    my ($yaml_name)  = $yaml_base =~ /^[a-z]+_(\w+)/;
+        $yaml_name ||= "(error-yaml-basename-had-no-prefix)";
+
+    print STDERR  "Y: $yaml_file\n" unless $Flags{quiet};
+
+    my  $y_ref  = LoadFile($yaml_file) or die "ERROR: YAML \"$yaml_file\" couldn't be parsed: $!\n";
+
+    expand_yaml($y_ref, { __BASE => $yaml_base, 
+                          __NAME => $yaml_name });
+
+    validate_yaml($cfg, $y_ref, "FILE", []);
+
+    my (@ref_yaml, @defined_in_file); 
+
+    my %inherit_fields = (
+        design => [qw/ defines_sim defines_syn /],
+        tb     => [qw/ defines_sim /],
+    );
+
+    my @tech_tables = qw/ rc_corners timing_conditions delay_corners /; # set by first yaml_type=tech file
+    my @containers  = qw/ modules testbenches libraries /;
+
+    # Top fields are set by the first NON-TECH file that defines one:
+#    if ($parent_type ne "tech") {
+#print STDERR "parent_type=$parent_type; YT BEFORE IS $cfg->{type}\n";
+    $cfg->{top}  ||= $_ if $_ = $y_ref->{top_module}; # safe bc mutually-exclusive
+    $cfg->{top}  ||= $_ if $_ = $y_ref->{default_tb};
+    $cfg->{type} ||=            $y_ref->{yaml_type};
+#print STDERR "parent_type=$parent_type; YT AFTER  IS $cfg->{type}\n";
+#    }
+    $cfg->{lib}  ||= $_ if $_ = $y_ref->{use_libs};
+    # Likewise, technology tables are defined by the first yaml_type:tech file:
+    for my $tt (@tech_tables) {
+        my $td = $y_ref->{$tt} or next;
+        if (!$cfg->{tech}{$tt}) {
+            $cfg->{tech}{$tt} = $td;
+        } else {
+            print STDERR "INFO: skip tech table \"$tt\" (already set)\n";
+        }
+    }
+
+    for my $container (@containers) {
+        for my $name (keys %{$y_ref->{$container}}) {
+            my  $ref =       $y_ref->{$container}{$name};
+
+            # deprecated syntax (only inside modules & testbenches), support but warn:
+            if (my $sub_yaml = $ref->{yaml}) {
+                delete $ref->{yaml};
+                delete $ref->{path_remap};
+                if (my @other = keys %$ref) {
+                    a_warn([$yaml_file], "$container/$name calls a sub-yaml (old syntax); ignoring these other keys: @other");
+                }
+                push @ref_yaml, $sub_yaml;
+                next;
+            }
+
+            # inherit (prepend) any file-level attributes, if present
+            for my $attr (@{$inherit_fields{ $y_ref->{yaml_type} }}) {
+                $ref->{$attr} ||= [];
+                unshift @{$ref->{$attr}}, @{ $y_ref->{$attr} || [] };
+            }
+
+            if (my $prev = $cfg->{$container}{$name}) {
+
+                # merge: new keys will be added; existing keys will be overwritten
+                for my $field (sort keys %$ref) {
+                    if ($prev->{$field}) {
+                        a_warn([$yaml_file], "$container/$name/$field redefined");
+                    }
+                    $prev->{$field} = $ref->{$field}; 
+                }
+
+            } else {
+
+                $cfg->{$container}{$name} = $ref;
+            }
+
+            push @defined_in_file, $ref;
+        }
+    }
+
+    # common handling (design) (no effect if no common: hash) (deprecated)
+    # plan is to deprecate since hier-yaml is main thrust; if still needed
+    # instead support a module named "common" that serves same purpose
+    #
+    # in hierarchical world, importing straight into 'modules' causes conflicts 
+    # because of repeated (but different) definitions of common/<name> across various 
+    # sub-yaml files. Resolve by interpreting as a kind of inheritance -- 
+    # prepend their *contents* into each module defined in file 
+    #
+    # it is assumed/enforced all common attributes are arrays
+
+    for my $name (keys %{$y_ref->{common}}) {
+        my $ref =        $y_ref->{common}{$name};
+
+        for my $attr (keys %$ref) {
+
+            my $attr_ref = $ref->{$attr};
+
+            for my $mod_ref (@defined_in_file) {
+                $mod_ref->{$attr} ||= [];
+                unshift @{$mod_ref->{$attr}}, @$attr_ref;
+            }
+        }
+    }
+
+    # Done *last* so that top_module / default_tb are set _by_the_current_file_
+    # instead of as a result of reading any referenced files!
+    read_hier($_, $cfg, $y_ref->{yaml_type}) foreach @{$y_ref->{yaml}}; # new style
+    read_hier($_, $cfg, $y_ref->{yaml_type}) foreach @ref_yaml;         # old style
+}
+# ---------------------------------------------------------------------------- #
+sub validate_schema {
+    my ($schema_ref) = @_;
+    my  $specs_ref   = {};
+
+    my %Attrs  = map { $_ => 1 } qw/ type values ref group count need if deprecated glob search unique /;
+    my %Refs   = map { $_ => 1 } qw/ ARRAY HASH HASHARR SCHEMA /;
+    my %Types  = map { $_ => 1 } qw/ enum string file dir find /;
+    my %Ifs    = map { $_ => 1 } qw/ eq ne set not /;
+    my %Counts = map { $_ => 1 } qw/ all any /;
+    my %Bools  = map { $_ => 1 } qw/ 1 0 /;
+    my %Needs  = map { $_ => 1 } qw/ opt req /;
+
+    for my $name (keys %$schema_ref) {
+        my $sch_ref  = $schema_ref->{$name};
+        my $spec_ref = $specs_ref->{$name} = {};
+        my $FAIL     = "SCHEMA ERROR $name";
+
+       ($_ = ref $sch_ref) && $_ eq "HASH"                            or die "$FAIL not a HASH ref ($_)\n";
+
+        # Pre-pass to create groups so they exist during 'if' testing
+        $spec_ref->{groups}{$_} ||= {} foreach grep { defined } map { $_->{group} } values %$sch_ref;
+
+        for my $f_name (keys %$sch_ref) {
+            my $f = $sch_ref->{$f_name};                   
+
+            for my $attr (keys %$f)          { $Attrs{$attr}          or die "$FAIL/$f_name unknown attribute \"$attr\"\n"; }
+                                                           
+            $spec_ref->{defs}{$f_name} = $f; # store original              
+                                                           
+            defined $f->{type}                                        or die "$FAIL/$f_name/type not set\n";
+             $Types{$f->{type}}                                       or die "$FAIL/$f_name/type invalid \"$f->{type}\"\n";
+
+            # types with required co-attributes:
+            if     ($f->{type} eq "enum")    { defined $f->{values}   or die "$FAIL/$f_name type=$f->{type} must also set \"values\"\n"; }
+            else                             { defined $f->{values}  and die "$FAIL/$f_name type=$f->{type} cannot set \"values\"\n"; }
+            if     ($f->{type} eq "find")    { defined $f->{search}   or die "$FAIL/$f_name type=$f->{type} must also set \"search\"\n"; }
+            else                             { defined $f->{search}  and die "$FAIL/$f_name type=$f->{type} cannot set \"search\"\n"; }
+
+            if     ($f->{type} eq "file")    { 
+                $f->{unique} ||= 0;
+                $Bools{$f->{unique}}                                  or die "$FAIL/$f_name/unique invalid value \"$f->{unique}\"\n"; 
+            } else {
+                defined $f->{unique}                                 and die "$FAIL/$f_name/type must be \"file\" if unique specified\n";
+            }
+            if (defined $f->{glob})          { 
+                $f->{type} eq "dir"                                   or die "$FAIL/$f_name type must be \"dir\" if glob specified\n";  
+               ($_ = ref $f->{glob}) && $_ eq "ARRAY"                 or die "$FAIL/$f_name/glob non-array \"$f->{glob}\"\n";
+               @{$f->{glob}}                                          or die "$FAIL/$f_name/glob array is empty\n";
+            }
+            if (defined $f->{values}) {
+               ($_ = ref $f->{values}) && $_ eq "ARRAY"               or die "$FAIL/$f_name/values non-array \"$f->{values}\"\n";
+               @{$f->{values}}                                        or die "$FAIL/$f_name/values array is empty\n";
+               $f->{legal}{$_} = 1 foreach @{$f->{values}};
+            }
+            if (defined $f->{search}) {
+               ($_ = ref $f->{search}) && $_ eq "ARRAY"               or die "$FAIL/$f_name/search non-array \"$f->{search}\"\n";
+               @{$f->{search}}                                        or die "$FAIL/$f_name/search array is empty\n";
+            }
+            if (defined $f->{ref})  { 
+                $Refs{$f->{ref}}                                      or die "$FAIL/$f_name/ref invalid \"$f->{ref}\"\n";
+                if ($f->{ref} eq "SCHEMA")   { $schema_ref->{$f_name} or die "$FAIL/$f_name/ref no corresponding SCHEMA defined\n" }
+            }
+
+            if (defined $f->{need})          { $Needs{$f->{need}}     or die "$FAIL/$f_name/need invalid \"$f->{need}\"\n";   }
+            if (defined $f->{deprecated})    { $f->{deprecated} ne "" or die "$FAIL/$f_name/deprecated is empty\n";           }
+
+            if (defined $f->{if}) {
+               ($_ = ref $f->{if}) && $_ eq "ARRAY"                   or die "$FAIL/$f_name/if non-array \"$f->{if}\"\n";
+                my @if = @{$f->{if}};
+                @if                                                   or die "$FAIL/$f_name/if array is empty\n";
+                if ($if[0] eq "eq" || $if[0] eq "ne") { 
+                    @if == 3                                          or die "$FAIL/$f_name/if-$if[0] expects 3 total elements\n";
+                    my $ref = $sch_ref->{$if[1]}                      or die "$FAIL/$f_name/if-$if[0] unknown field \"$if[1]\"\n"; 
+                    defined $ref->{ref}                              and die "$FAIL/$f_name/if-$if[0] field \"$if[1]\" is a container\n"; 
+                }
+                elsif ($if[0] eq "set" || $if[0] eq "not") {
+                    @if == 2                                          or die "$FAIL/$f_name/if-$if[0] expects 2 total elements\n";
+                    $sch_ref->{$if[1]} || $spec_ref->{groups}{$if[1]} or die "$FAIL/$f_name/if-$if[0] unknown field/group \"$if[1]\"\n"; 
+                }
+                else                                                   { die "$FAIL/$f_name/if invalid operator \"$if[0]\"\n"; }
+            }
+
+            if (defined $f->{count}) {  $Counts{$f->{count}} 
+                                     || $f->{count} =~ /^\d$/         or die "$FAIL/$f_name/count invalid \"$f->{count}\"\n"; }
+
+            if (defined $f->{group}) {
+                $f->{group} =~ /^\w+$/                                or die "$FAIL/$f_name illegal chars in group name \"$f->{group}\"\n"; 
+                # crucial so that if-set/if-not-set can use field-names or group-names:
+                $sch_ref->{ $f->{group} }                            and die "$FAIL/$f_name group name \"$f->{group}\" clashes with field \"$f->{group}\"\n"; 
+
+                my $grp_ref = $spec_ref->{groups}{$f->{group}};
+                push @{$grp_ref->{fields}}, $f_name;
+
+                for my $attr (qw/ count need if /) {
+                    my ($this, $prev, $prev_str, $this_str);
+                    if (defined ($this = $f->{$attr})) {
+                        $this ne ""                                   or die "$FAIL/$f_name/$attr is empty\n";
+
+                        if ($prev = $grp_ref->{$attr}) {
+                            $prev_str = ref $prev ? join(",", @$prev) : $prev; # (only needed for 'if')
+                            $this_str = ref $this ? join(",", @$this) : $this; # (only needed for 'if')
+                            $prev_str eq $this_str                    or die "$FAIL/group/$f->{group}/$attr mismatch ($prev_str != $this_str)\n";
+                        }
+                        $grp_ref->{$attr} = $this;
+                    }
+                }
+
+            } else {
+                defined $f->{count}                                  and die "$FAIL/$f_name non-group cannot have \"count\"\n";
+                $spec_ref->{singles}{$f_name} = 1;
+            }
+            $specs_ref->{__ALL__}{$f_name} = 1;
+        }
+
+        for my $grp (keys %{$spec_ref->{groups}}) {
+            my $ref = $spec_ref->{groups}{$grp};
+            defined $ref->{need}                                      or die "$FAIL/group/$grp missing \"need\" (must set on at least 1 member)\n";
+            defined $ref->{count}                                     or die "$FAIL/group/$grp missing \"count\" (must set on at least 1 member)\n";
+            my $num = scalar @{$ref->{fields}};
+               $num > 1                                               or die "$FAIL/group/$grp must have more than 1 member\n";
+            if ($ref->{count} =~ /^\d+$/) {
+                $ref->{count} > 0                                     or die "$FAIL/group/$grp/count must be > 0 : \"$ref->{count}\"\n"; 
+                $ref->{count} <= $num                                 or die "$FAIL/group/$grp/count must be <= $num members : \"$ref->{count}\"\n"; 
+            }
+        }
+    }
+
+    return $specs_ref;
+}
+# ---------------------------------------------------------------------------- #
+sub chk_ifile {
+    my ($mode, $f) = @_;
+
+    $f    or die "ERROR: must provide $mode <input-file>\n";
+
+    -e $f or die "ERROR: no such $mode file: $f\n";
+    -r  _ or die "ERROR: can't read $mode file: $f\n";
+
+    return $f;
+}
+# ---------------------------------------------------------------------------- #
+sub chk_ofile  { 
+    my ($mode, $f) = @_;
+
+    $f or die "ERROR: must provide $mode <output-file> (or \"-\")\n";
+
+    if ($f ne "-") {
+        if (-e $f) {        -w _ or die "ERROR: can't write to existing file: $f\n"; }
+        -w dirname($f)           or die "ERROR: can't write to dir of file: $f\n"; 
+    }
+    return $f;
+}
+# ---------------------------------------------------------------------------- #
+sub chk_libs {
+    my ($cfg) = @_;
+
+    my $libs = $cfg->{ lib }     or die "ERROR: -lib not specified / use_libs not set in YAML(s)\n";
+
+    my @lib = split ' ', $libs;
+
+    for my $lib (@lib) {
+        $cfg->{libraries}{$lib} or die "ERROR: $lib \"$lib\" not defined by any tech YAML\n"; 
+    }
+
+    if (!$Flags{quiet} && !$Already_Said{info_lib}++) {
+        printf STDERR "INFO: using lib : $_\n" foreach @lib;
+    }
+
+    return @lib;
+}
+# ---------------------------------------------------------------------------- #
+sub chk_top {
+    my ($cfg) = @_;
+    my ($top, $cont);
+
+    # hopefully this can go away / we can unify behind design and lose tb:
+    if ($cfg->{type} eq "design") {
+        $top = $cfg->{top}    or die "ERROR: -top not specified / top_module not set in YAML(s)\n";
+        $cont = "modules";
+    } else {
+        $top = $cfg->{top}    or die "ERROR: -top not specified / default_tb not set in YAML(s)\n";
+        $cont = "testbenches";
+    }
+
+    $cfg->{$cont}{$top}  or die "ERROR: \"$top\" not defined in $cont\n";
+
+    if (!$Flags{quiet} && !$Already_Said{info_top}++) {
+        printf STDERR "INFO: using top : $top\n";
+    }
+
+    return ($top, $cont);
+}
+# ---------------------------------------------------------------------------- #
+sub chk_constraints {
+    my ($cfg) = @_;
+
+}
+# ---------------------------------------------------------------------------- #
+sub process_hier {
+    my %arg     = @_;
+    my $obj_ref = $arg{cfg}{$arg{container}}{$arg{name}} or die "ERROR (internal): cannot find cfg/$arg{container}/$arg{name}\n";
+
+    for my $sub_attr (@{$arg{descend}}) { # ie: submodules*
+        process_hier(%arg, container => "modules", name => $_) foreach @{$obj_ref->{$sub_attr}};
+    }
+
+    for my $group (keys %{$arg{collect}}) {
+
+        for my $attr (@{$arg{collect}{$group}}) {
+            if (my $attr_ref = $obj_ref->{$attr}) {
+                if (ref $attr_ref eq "ARRAY") {
+                    push @{$arg{out}{$group}}, @$attr_ref; 
+                } elsif (ref $attr_ref eq "HASH") {
+                    for my $key (keys %$attr_ref) {
+                        push @{$arg{out}{$group}{$key}}, @{$attr_ref->{$key}};
+                    }
+                } else {
+                    print STDERR "WARN (INTERNAL) PLS TELL RAND: skip unexpected ref: $arg{type}/$arg{name}/$attr\n";
+                }
+            }
+        }
+    }
+}
+
+# ============================================================================ #
+sub output_dump {
+    my ($fh, $cfg) = @_;
+
+    print $fh Dumper($cfg), "\n";
+
+    return 0;
+}
+# ---------------------------------------------------------------------------- #
+sub output_regs {
+    my ($fh, $cfg) = @_;
+
+    my ($top, $container) = chk_top($cfg);
+
+    process_hier(
+        cfg       => $cfg,
+        container => $container,
+        name      => $top, 
+        descend   => [qw/submodules_sim_only submodules/], # only for type=design
+        collect   => { regs => [qw/ regs /] },
+        out       => (my $out_ref = {}),
+    );
+
+    my $missed_ref = {};
+    print $fh "$_\n" foreach output_paths( $fh, $missed_ref, @{$out_ref->{regs}} );
+
+    output_missed($fh, "#", $missed_ref);
+
+    return scalar keys %$missed_ref;
+}
+# ---------------------------------------------------------------------------- #
+sub output_cdl {
+    my ($fh, $cfg) = @_;
+
+    my ($top, $container) = chk_top($cfg);
+    my @lib               = chk_libs($cfg); 
+
+    my %arg = (
+        cfg       => $cfg, 
+        descend   => [qw/submodules/], 
+        collect   => { cdl => [qw/ cdl /], },
+        out       => (my $out_ref = {}),
+    );
+
+    process_hier( %arg, container => "libraries", name => $_   ) foreach @lib;
+    process_hier( %arg, container => "modules",   name => $top );
+
+    my $missed_ref = {};
+
+    print $fh "$_\n" foreach output_paths( $fh, $missed_ref, @{$out_ref->{cdl}} );
+
+    output_missed($fh, "#", $missed_ref);
+
+    return scalar keys %$missed_ref;
+}
+# ---------------------------------------------------------------------------- #
+sub output_gds {
+    my ($fh, $cfg) = @_;
+
+    my ($top, $container) = chk_top($cfg);
+    my @lib               = chk_libs($cfg);
+
+    my %arg = (
+        cfg       => $cfg, 
+        descend   => [qw/submodules/], 
+        collect   => { gds => [qw/ gds /], },
+        out       => (my $out_ref = {}),
+    );
+
+    process_hier( %arg, container => "libraries", name => $_   ) foreach @lib;
+    process_hier( %arg, container => "modules",   name => $top );
+
+    my $missed_ref = {};
+
+    print $fh "$_\n" foreach output_paths( $fh, $missed_ref, @{$out_ref->{gds}} );
+
+    output_missed($fh, "#", $missed_ref);
+
+    return scalar keys %$missed_ref;
+}
+# ---------------------------------------------------------------------------- #
+sub output_lef {
+    my ($fh, $cfg) = @_;
+
+    my ($top, $container) = chk_top($cfg);
+    my @lib               = chk_libs($cfg);
+
+    my %arg = (
+        cfg       => $cfg, 
+        descend   => [qw/submodules/], 
+        collect   => { lef => [qw/ lef /], },
+        out       => (my $out_ref = {}),
+    );
+
+    process_hier( %arg, container => "libraries", name => $_   ) foreach @lib;
+    process_hier( %arg, container => "modules",   name => $top );
+
+    my $missed_ref = {};
+
+    print $fh "$_\n" foreach output_paths( $fh, $missed_ref, @{$cfg->{libraries}{$lib[0]}{tlef}} ); 
+
+    print $fh "$_\n" foreach output_paths( $fh, $missed_ref, @{$out_ref->{lef}} );
+
+    output_missed($fh, "#", $missed_ref);
+
+    return scalar keys %$missed_ref;
+}
+# ---------------------------------------------------------------------------- #
+# MAYBE INSTEAD of donig libraries then moduels, should just inject
+# library/submodules into top's submodule list? then wouldn't have to do separately
+
+sub output_mmmc {
+    my ($fh, $cfg) = @_;
+
+    # check before processing:
+    my ($top, $container) = chk_top($cfg);
+    my @lib               = chk_libs($cfg);
+
+    my %arg = (
+        cfg       => $cfg, 
+        descend   => [qw/submodules/], 
+        collect   => { lib => [qw/ lib /], sdc => [qw/ sdc /]},
+        out       => (my $out_ref = {}),
+    );
+
+    process_hier( %arg, container => "libraries", name => $_   ) foreach @lib;
+    process_hier( %arg, container => "modules",   name => $top );
+
+    # check after processing:
+    my $modes = chk_constraints($cfg);
+
+#print Dumper($out_ref), "\n";
+#exit;
+
+    my $missed_ref = {};
+
+    print $fh "set temp [expr { [get_db program_short_name] eq \"genus\" ? \"temperature\" : \"T\"}]\n";
+    print $fh "set $Ins{var} \$env($Ins{var})\n";
+
+    for my $corner (sort keys %{$cfg->{tech}{rc_corners}}) {
+        my  $ref  = $cfg->{tech}{rc_corners}{$corner};
+        my ($qrc) = output_paths($fh, $missed_ref, $ref->{qrc_tech_file});
+        print $fh "create_rc_corner -name rc_$corner -\$temp $ref->{temperature} -qrc_tech $qrc\n";
+    }
+
+    print $fh "\n";
+
+    for my $tcon (sort @{$cfg->{tech}{timing_conditions}}) {
+        print $fh "set libs {} ; # $tcon\n";
+        print $fh "lap libs $_\n" foreach output_paths( $fh, $missed_ref, @{$out_ref->{lib}{$tcon}} );
+        print $fh "create_library_set -name ls_$tcon -timing \$libs ; # -socv <list>\n";
+        print $fh "\n";
+    }
+
+    print $fh "\n";
+
+    for my $tcon (sort @{$cfg->{tech}{timing_conditions}}) {
+        print $fh "create_timing_condition -name tc_$tcon -library_sets { ls_$tcon }\n";
+    }
+
+    print $fh "\n";
+
+    for my $dc (sort keys %{$cfg->{tech}{delay_corners}}) {
+        my $ref =           $cfg->{tech}{delay_corners}{$dc};
+        print $fh "create_delay_corner -name dc_$dc -rc_corner rc_$ref->{rc_corner} -timing_condition tc_$ref->{timing_condition}\n";
+    }
+
+    print $fh "\n";
+
+    output_missed($fh, "#", $missed_ref);
+
+    return scalar keys %$missed_ref;
+}
+# ---------------------------------------------------------------------------- #
+sub output_sim {
+    my ($fh, $cfg) = @_;
+
+    my ($top, $cont) = chk_top($cfg);
+
+    process_hier(
+        cfg       => $cfg,
+        container => $cont, 
+        name      => $top, 
+        descend   => [qw/submodules_sim_only submodules/], 
+        collect   => { 
+            defines    => [qw/ defines_sim /],
+            incdirs    => [qw/ incdir     incdir_abs    incdir_sim_only  incdir_abs_sim_only /],
+            libdirs    => [qw/ libdir     libdir_abs    libdir_sim_only  libdir_abs_sim_only /],
+            rtl_files  => [qw/ rtl        rtl_abs       rtl_sim_only     rtl_abs_sim_only    /],
+            packages   => [qw/ packages   packages_abs   /],
+            interfaces => [qw/ interfaces interfaces_abs /],
+        },
+        out     => (my $out_ref = {}),
+    );
+
+    print $fh "// Simulation RTL Manifest for: $top\n";
+
+    return output_optionfile($fh, $out_ref);
+}
+# ---------------------------------------------------------------------------- #
+sub output_syn {
+    my ($fh, $cfg) = @_;
+
+    my ($top, $cont) = chk_top($cfg);
+
+    process_hier(
+        cfg       => $cfg,
+        container => "modules", 
+        name      => $top, 
+        descend   => [qw/submodules/], 
+        collect   => { 
+            defines    => [qw/ defines_syn /],
+            incdirs    => [qw/ incdir     incdir_abs    incdir_syn_only  incdir_abs_syn_only /],
+            libdirs    => [qw/ libdir     libdir_abs    libdir_syn_only  libdir_abs_syn_only /],
+            rtl_files  => [qw/ rtl        rtl_abs       rtl_syn_only     rtl_abs_syn_only    /],
+            packages   => [qw/ packages   packages_abs   /],
+            interfaces => [qw/ interfaces interfaces_abs /],
+        },
+        out     => (my $out_ref = {}),
+    );
+
+    print $fh "// Synthesis RTL Manifest for: $top\n";
+
+    return output_optionfile($fh, $out_ref);
+}
+# ---------------------------------------------------------------------------- #
+sub output_optionfile {
+    my ($fh, $out_ref) = @_;
+
+    my $missed_ref = {};
+
+    print $fh "\n// Library extensions: suffixes to match in Library directories\n\n";
+    print $fh "+libext+.v+.sv+.vp+.vlib+\n";
+
+    print $fh "\n// Global defines (defines_*)\n\n";
+    print $fh "+define+$_\n" foreach uniq @{$out_ref->{defines}};
+
+    print $fh "\n// Include directories (incdir*) to auto-search for \"`include <file>\"\n\n"; 
+    print $fh "+incdir+$_\n" foreach output_paths( $fh, $missed_ref, @{$out_ref->{incdirs}} );
+
+    print $fh "\n// Library directories (libdir*) to auto-search for \"<module>.<libext>\"\n\n"; 
+    print $fh "-y $_\n"      foreach output_paths( $fh, $missed_ref, @{$out_ref->{libdirs}} );
+
+    print $fh "\n// Package definition files (packages*)\n\n"; 
+    print $fh "$_\n"         foreach output_paths( $fh, $missed_ref, @{$out_ref->{packages}} );
+
+    print $fh "\n// Interface files (interfaces*)\n\n"; 
+    print $fh "$_\n"         foreach output_paths( $fh, $missed_ref, @{$out_ref->{interfaces}} );
+
+    print $fh "\n// RTL files (rtl*)\n\n"; 
+    print $fh "$_\n"         foreach output_paths( $fh, $missed_ref, @{$out_ref->{rtl_files}} );
+
+    output_missed($fh, "//", $missed_ref);
+
+    return scalar keys %$missed_ref;
+}
+# ---------------------------------------------------------------------------- #
+sub output_missed {
+    my ($fh, $pfx, $missed_ref) = @_;
+
+    if (%$missed_ref) {
+
+        my $msg;
+        if    ($Flags{keep}) { $msg = "but allowed and KEPT in output (-keep)"      } 
+        elsif ($Flags{drop}) { $msg = "but allowed and DROPPED from output (-drop)" } 
+        else                 { $msg = "(fatal ERROR)"                               }
+
+        if (fileno($fh) == 1) {
+            if (!$Flags{quiet}) {
+            print STDERR "\n$pfx Referenced path(s) MISSING $msg\n";
+            print STDERR "$pfx - $_\n" foreach sort keys %$missed_ref;
+            }
+        } else {
+            print $fh   "\n$pfx Referenced path(s) MISSING $msg\n";
+            print $fh   "$pfx - $_\n" foreach sort keys %$missed_ref;
+        }
+    }
+}
+# ---------------------------------------------------------------------------- #
+sub output_paths { 
+    my ($fh, $missed_ref, @in) = @_;
+
+    my $fnum = fileno($fh); # auto-suppress prefix for STDOUT (1)
+    my @out;
+
+    for my $path (uniq @in) { 
+        if ($Missing{$path}) { 
+            $missed_ref->{$path} = 1;
+            next if $Flags{drop};
+        }
+        if ($path !~ m{^/}) {
+            if ($Flags{abs}) {
+                $path = "$Ins{ws}/$path";
+            } elsif ($Ins{var} ne "" && $fnum != 1) {
+                $path = "\$$Ins{var}/$path";
+            }
+        }
+
+        push @out, $path;
+    } 
+
+    return @out;
+}
+# ---------------------------------------------------------------------------- #
+

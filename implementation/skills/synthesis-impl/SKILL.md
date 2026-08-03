@@ -41,7 +41,16 @@ and `-lef`.
 - Synthesis consumes the *synthesis* filelist (`*_syn_only` in, `*_sim_only` out) —
   distinct from the sim filelist; regenerate with `alchemy -syn`.
 
-## Sources (MSIC)
-`impl/Makefile.impl`, `impl/<block>/Makefile`, `impl/constraints/`,
-`utils/impl_utils/scripts/`, `utils/chip_utils/scripts/alchemy` (syn/lef/mmmc),
-`doc/msic_methodology.md` (Synthesis / LEC / Physical Verification).
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/examples/digital_top.sdc`
+  - `references/examples/msic_top.pysdc`
+  - `references/msic_methodology.md`
+  - `scripts/Makefile.example`
+  - `scripts/Makefile.impl`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

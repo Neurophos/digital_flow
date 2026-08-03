@@ -10,10 +10,21 @@ Adding or changing a peripheral's registers; regenerating a `reg_top`/`reg_pkg`
 after editing the register `.hjson`; producing the firmware C header or the
 register doc.
 
+## External tools (versioned disk install — like the EDA tools)
+`regtool` (OpenTitan-derived reggen/topgen, ~29M) and `ipxact2hjson` are **not
+bundled** — they are large third-party toolchains installed on disk and pinned by
+version, exactly like the Cadence/ARM EDA tools (see the `env-setup` skill).
+Reference them through a versioned path / env var, **TBD**, e.g.:
+```bash
+export REGTOOLS_HOME=/tools/neurophos/regtools/<version>       # provides regtool.py + reggen/topgen
+export IPXACT2HJSON_HOME=/tools/neurophos/ipxact2hjson/<version>
+```
+This repo bundles only the flow-owned glue: `scripts/Makefile.regtool` (config)
+and `scripts/build_regs.pl` (cross-module orchestration).
+
 ## Flow
-Register source is hjson in the module's `regs/reg_src/`. `regtool.py`
-(OpenTitan-derived reggen/topgen) generates every artifact. Driven by
-`utils/chip_utils/config/Makefile.regtool` (needs the venv):
+Register source is hjson in the module's `regs/reg_src/`. `$REGTOOLS_HOME/regtool.py`
+generates every artifact; driven by `scripts/Makefile.regtool` (needs the venv):
 
 ```bash
 make all        # in the module regs dir -> generates all of:
@@ -22,12 +33,12 @@ make all        # in the module regs dir -> generates all of:
 ```
 Underlying commands (venv-activated):
 ```
-regtool.py -r -t <rtl_dir>  <reg_src>      # RTL (reg_top / reg_pkg / apb_adapter)
-regtool.py -s -t <dv_dir>   <reg_src>      # DV RAL pkg
-regtool.py -D -t <inc_dir>  <reg_src> > <inc_dir>/<reg>.h   # firmware C header
+$REGTOOLS_HOME/regtool.py -r -t <rtl_dir>  <reg_src>   # RTL (reg_top / reg_pkg / apb_adapter)
+$REGTOOLS_HOME/regtool.py -s -t <dv_dir>   <reg_src>   # DV RAL pkg
+$REGTOOLS_HOME/regtool.py -D -t <inc_dir>  <reg_src> > <inc_dir>/<reg>.h   # firmware C header
 ```
-IPXACT sources go through `ipxact2hjson/` first; `build_regs.pl` orchestrates
-across modules (invoked by `build_rtl`).
+IPXACT sources go through `$IPXACT2HJSON_HOME` first; `scripts/build_regs.pl`
+orchestrates across modules (invoked by `build_rtl`).
 
 ## Gotchas
 - **prim_subreg flattening (matters for coverage/formal):** Xcelium flattens the
@@ -39,9 +50,18 @@ across modules (invoked by `build_rtl`).
 - Regenerate through `make` (venv + correct `-t` target dirs); running `regtool.py`
   by hand without the venv fails on imports.
 
-## Sources (MSIC)
-`utils/chip_utils/scripts/regtools/regtool.py` (+ `reggen/`, `topgen/`),
-`utils/chip_utils/scripts/ipxact2hjson/`,
-`utils/chip_utils/scripts/build_manifest/build_regs.pl`,
-`utils/chip_utils/config/Makefile.regtool`, module `regs/` dirs,
-`doc/{register_flow,regtool_README}.md`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/register_flow.md`
+  - `references/regtool_README.md`
+  - `scripts/build_regs.pl`
+  - `scripts/Makefile.regtool`
+
+External (versioned disk install, TBD — see body): `regtool`/reggen/topgen,
+`ipxact2hjson`.
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

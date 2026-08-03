@@ -61,9 +61,17 @@ for d in digital_flow/*/skills/*; do ln -s "../../$d" ".claude/skills/$(basename
 
 ## Conventions
 
-- **Reference, don't fork:** chip-specific scripts are pointed to in place (paths
-  in each skill's Sources); only chip-agnostic scripts/templates are copied here
-  (`verification/scripts/`, `verification/templates/`, …).
-- Skills capture both the tool flow *and* the hard-won gotchas (e.g. the coverage
-  exclusion discipline, the tb_ctrl command-handler pattern, the RNM derivation
-  loop).
+- **Self-contained skills.** Each `SKILL.md` bundles what it needs in its own
+  directory (Claude Code format): reference docs in `references/`, the flow's own
+  scripts in `scripts/`, examples in `references/examples/`. No skill points at an
+  external workspace/repo to *read* — everything is here. Command paths in a skill
+  body (e.g. `verif/uvm/`, `design/<blk>/`) are the *consuming project's*
+  conventional layout, not this repo.
+- **External tools are referenced, not bundled.** Large third-party toolchains —
+  the Cadence/ARM EDA tools **and** the Neurophos `regtools` (reggen/topgen) and
+  `ipxact2hjson` — are versioned disk installs pointed to by env var
+  (`MDV_XLM_HOME`, `REGTOOLS_HOME`, `IPXACT2HJSON_HOME`, …; see `env-setup`). Only
+  the flow's *own* glue scripts are copied in.
+- Skills capture both the tool flow *and* the hard-won gotchas (the coverage
+  exclusion discipline, the tb_ctrl command-handler pattern, the RNM two flows,
+  the formal `n_`-vs-registered pitfall).

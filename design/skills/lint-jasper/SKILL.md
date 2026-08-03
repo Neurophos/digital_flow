@@ -26,7 +26,15 @@ The lint policy/setup is `utils/chip_utils/scripts/lint/base_lint_run.tcl`
 - SuperLint needs the same generated `.sv` + regs the sim uses — run `make prepro`
   / `build_regs` first so it lints the real elaborated design, not stale sources.
 
-## Sources (MSIC)
-`utils/chip_utils/config/Makefile.rtl` (`slint`/`slint_gui`),
-`utils/chip_utils/scripts/lint/{base_lint_run,sl_reload}.tcl`,
-`doc/msic_methodology.md` (Lint section).
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/Makefile.rtl`
+  - `references/msic_methodology.md`
+  - `scripts/base_lint_run.tcl`
+  - `scripts/sl_reload.tcl`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

@@ -100,11 +100,15 @@ make netlist  # ONLY to refresh the snapshot from live OA (needs startPrj)
 top TB is where firmware/protocol coverage is closed; the RNM env is where the
 analog model's electrical correctness is signed off.
 
-## Sources (MSIC)
-`verif/uvm/tb/msic_tb_pkg.sv`, `env/msic_env.sv`,
-`env/{fabio_cmd_handler,gpio_bfm_handler,uart_cmd_handler}.sv`,
-`agents/tb_ctrl/tb_ctrl_slave.sv`, `scoreboards/msic_scoreboard.sv`,
-`tests/msic_{base,cpu_base}_test.sv`, `run_regression.sh` (`evaluate_log`);
-`verif/model/{Makefile,README.md}`, `verif/model/tools/rnmgen2.py`,
-`verif/model/src/{leaves,roles}/`, `verif/model/tb/tb_anatop.sv`,
-`verif/model/doc/EEnet_README.md`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/examples/fabio_cmd_handler.sv`
+  - `references/examples/gpio_bfm_handler.sv`
+  - `references/examples/msic_env.sv`
+  - `references/examples/msic_scoreboard.sv`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

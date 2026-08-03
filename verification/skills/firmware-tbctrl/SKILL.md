@@ -56,8 +56,16 @@ its opcode. Existing opcodes: FabIO (in `ctrl[23:16]`, plus `0xA5xxxxxx`), GPIO_
 - A FabIO posted write returns OKAY even to an inert/unmapped target — read back to
   confirm it landed.
 
-## Sources (MSIC)
-`firmware/msic_tests/Makefile.firmware`, `firmware/msic_tests/<test>/`,
-`firmware/msic_tests/common/{retarget,src,include}/`,
-`common/include/tb_ctrl.h`, `common/retarget/uart_stdout.c`,
-`verif/uvm/agents/tb_ctrl/tb_ctrl_slave.sv`, generated `<peripheral>.h` / `memio.h`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/examples/tb_ctrl.h`
+  - `references/examples/tb_ctrl_slave.sv`
+  - `references/examples/uart_cmd_handler.sv`
+  - `references/examples/uart_rx_inject_seq.sv`
+  - `scripts/Makefile.firmware`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

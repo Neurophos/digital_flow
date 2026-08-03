@@ -89,8 +89,14 @@ regression it can transiently `*E,LICERR`; re-run `make cov_merge` once sims fre
 - **Bug** (fix + document): logic that *should* work but the stimulus proves it
   doesn't (record in the project's `rtl_bugs_found_in_verification.md`).
 
-## Sources (MSIC)
-`verif/uvm/Makefile` (cov_merge/cov_report/cov_gui), `verif/uvm/coverage.ccf`,
-`verif/uvm/coverage.vRefine`, `verif/uvm/cov_exclusions.tcl`,
-`verif/uvm/verisium_migration.md` (campaign log + status snapshot),
-`doc/rtl_bugs_found_in_verification.md`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/examples/coverage.ccf`
+  - `references/examples/coverage.vRefine`
+  - `scripts/cov_exclusions.tcl`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

@@ -1,0 +1,180 @@
+#####################################################################
+# Execute the following command to determine the root of
+#   the workarea if it is not already set. Then include the 
+#   common Makefile. If it has already been included, it 
+#   will be ignored. Otherwise, variables will be set for 
+#   use in this methodology. 
+#####################################################################
+ROOT_DIR            ?= $(shell git rev-parse --show-toplevel)/
+
+include $(ROOT_DIR)utils/chip_utils/config/Makefile.common
+
+
+#####################################################################
+# Compilation-specific variables. These come from the ARM 
+# 	CMSDK testcase compilation flow.
+#####################################################################
+CPU_DEFINE				= -DCORTEX_M4
+#CPU_TYPE				= -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=softfp
+CPU_TYPE				= -mcpu=cortex-m4 
+
+STACK_SIZE				?= 0x800
+HEAP_SIZE				?= 0x1000
+
+#####################################################################
+# Set up paths and filename variables
+#####################################################################
+PYTHON                          = python3
+REGTOOL                         = $(REGTOOL_DIR)/regtool.py
+
+export VENV_DIR                 = $(ROOT_DIR)scripts/venv/
+VENV_BIN_DIR                    = $(VENV_DIR)bin/
+VENV_ACTIVATE_SCRIPT            = source $(VENV_BIN_DIR)activate
+
+# This is only set if not defined before entering this Makefile
+TESTS_BASE_DIR          ?= $(FIRMWARE_DIR)/msic_tests/
+
+CMSIS_DIR    			= $(TESTS_BASE_DIR)/cmsis/
+
+CMSIS_INC_DIR			= $(CMSIS_DIR)inc/
+CMSIS_SRC_DIR			= $(CMSIS_DIR)src/
+
+REG_FILE_INC_DIRS       = -I $(ROOT_DIR)design/dac_ctrl/regs/inc \
+                          -I $(ROOT_DIR)design/chip_ctrl/regs/inc \
+						  -I $(ROOT_DIR)design/clock_ctrl/regs/inc \
+						  -I $(ROOT_DIR)design/gpio/regs/inc \
+						  -I $(ROOT_DIR)design/spi_host/regs/inc \
+						  -I $(ROOT_DIR)design/fabio_tgt/regs/inc 
+
+TESTCASE_DIR            = $(TESTS_BASE_DIR)$(TESTNAME)/
+TESTCASE_SRC_DIR        = $(TESTCASE_DIR)src/
+TESTCASE_INC_DIR        = $(TESTCASE_DIR)inc/
+TESTCASE_SCRIPTS_DIR    = $(TESTCASE_DIR)scripts/
+GCC_OUT_DIR				= $(TESTCASE_DIR)gcc/
+VERILOG_OUT_DIR			= $(TESTCASE_DIR)verilog/
+
+TESTCASE_FILE			= $(TESTCASE_SRC_DIR)$(TESTNAME).c
+
+FW_COMMON_DIR			= $(TESTS_BASE_DIR)common/
+FW_COMMON_SCRIPTS_DIR	= $(FW_COMMON_DIR)/scripts/
+FW_COMMON_SRC_DIR		= $(FW_COMMON_DIR)/src/
+FW_COMMON_INC_DIR		= $(FW_COMMON_DIR)/inc/
+
+# Preprocessor script for generating memio.h
+PREPRO_SCRIPT           = $(ROOT_DIR)utils/chip_utils/scripts/prepro
+MEMIO_PYH               = $(FW_COMMON_DIR)include/memio.pyh
+MEMIO_H                 = $(FW_COMMON_DIR)include/memio.h
+
+LINKER_SCRIPT_NAME 		?= msic.ld
+LINKER_SCRIPT 			= $(FW_COMMON_SCRIPTS_DIR)$(LINKER_SCRIPT_NAME)
+
+STARTUP_FILENAME    	= startup_msic.c
+STARTUP_FILE        	?= $(FW_COMMON_SRC_DIR)$(STARTUP_FILENAME)
+
+SYSTEM_FILENAME     	= system_CMSDK_CM4.c
+SYSTEM_FILE				?= $(CMSIS_SRC_DIR)$(SYSTEM_FILENAME)
+
+OBJ_FILE				= $(GCC_OUT_DIR)$(TESTNAME).o
+MAP_FILE				= $(GCC_OUT_DIR)$(TESTNAME).map
+LST_FILE				= $(GCC_OUT_DIR)$(TESTNAME).s
+BIN_FILE				= $(GCC_OUT_DIR)$(TESTNAME).bin
+TMP_HEX_FILE			= $(VERILOG_OUT_DIR)$(TESTNAME).pre-clean.hex
+HEX_FILE				= $(VERILOG_OUT_DIR)$(TESTNAME).hex
+ARM_BIN_FILE            = $(VERILOG_OUT_DIR)$(TESTNAME).arm.bin
+
+USER_DEPENDENCIES		+= $(TESTS_BASE_DIR)/Makefile $(TESTS_BASE_DIR)/Makefile.firmware
+
+# Valid options for BUILD_TYPE are SILULATION and SILICON. If you 
+# 	do not set it to one of these, an error is generated
+BUILD_TYPE				?= SIMULATION
+
+
+#####################################################################
+# GCC options
+#####################################################################
+GNU_CC      		= arm-none-eabi-gcc
+GNU_OBJDUMP 		= arm-none-eabi-objdump
+GNU_OBJCOPY 		= arm-none-eabi-objcopy
+
+GNU_CC_FLAGS 		= -g -O1 -mthumb $(CPU_TYPE)
+GNU_CC_OPTIONS		= $(GNU_CC_FLAGS) -I $(CMSIS_INC_DIR) $(REG_FILE_INC_DIRS) -D__STACK_SIZE=$(STACK_SIZE) -D__HEAP_SIZE=$(HEAP_SIZE) $(CPU_DEFINE) -Wl,-Map,$(MAP_FILE)
+
+
+#####################################################################
+# Targets
+#####################################################################
+default: all
+
+all: $(BIN_FILE) $(LST_FILE) $(HEX_FILE) $(ARM_BIN_FILE)
+
+check_build_type:
+	# Before generating the version, confirm the correct command-line options
+	@if [ "$(BUILD_TYPE)" != "SIMULATION" ]; then \
+		if [ "$(BUILD_TYPE)" != "SILICON" ]; then \
+			echo "" ; echo ""; \
+			echo "You did not specify a valid BUILD_TYPE option. Please hit ctrl-c and rerun make with either";\
+			echo "    BUILD_TYPE=SIMULATION or BUILD_TYPE=SILICON on the make command line as appropriate."; \
+			echo "" ; echo ""; \
+			read a; \
+		fi \
+	fi
+
+$(GCC_OUT_DIR):
+	@mkdir $(GCC_OUT_DIR)
+
+.PHONY: generate_memio
+generate_memio:
+	@echo "Generating $(MEMIO_H)..."
+	$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(PREPRO_SCRIPT) $(MEMIO_PYH) > $(MEMIO_H)
+
+$(GCC_OUT_DIR)$(TESTNAME).o : check_build_type $(STARTUP_FILE) $(TESTCASE_FILE) $(SYSTEM_FILE) $(LINKER_SCRIPT) $(USER_DEPENDENCIES) generate_memio | $(GCC_OUT_DIR)
+	# Compile $(TESTNAME).c to gcc/$(TESTNAME).o
+	@$(GNU_CC) $(GNU_CC_OPTIONS) \
+		$(STARTUP_FILE) \
+		$(TESTCASE_FILE) \
+		$(SYSTEM_FILE) \
+		$(USER_GCC_OPTS) \
+		-D $(BUILD_TYPE) \
+		-L $(FW_COMMON_SCRIPTS_DIR) \
+		-T $(LINKER_SCRIPT) \
+		-o $(OBJ_FILE)
+
+$(LST_FILE) : $(OBJ_FILE)
+	# Generate disassembly code
+	@$(GNU_OBJDUMP) -S $(OBJ_FILE) > $(LST_FILE)
+
+$(BIN_FILE) : $(OBJ_FILE)
+	# Generate binary file
+	@$(GNU_OBJCOPY) -S $(OBJ_FILE) -O binary $(BIN_FILE)
+
+$(VERILOG_OUT_DIR):
+	@mkdir $(VERILOG_OUT_DIR)
+
+$(HEX_FILE) : $(OBJ_FILE) | $(VERILOG_OUT_DIR)
+	# Generate hex file
+	@$(GNU_OBJCOPY) -S $(OBJ_FILE) -R .comment -R .ARM.attributes --gap-fill 0 --pad-to 65536 --reverse-bytes=4 --verilog-data-width 4 --adjust-vma -0x20000000 -O verilog $(TMP_HEX_FILE)
+	# Now generate a 4-byte-per-line version (TSMC macro)
+	@cat $(TMP_HEX_FILE) | sed -e ':a;N;$$!ba;s/\([^[:space:]]\)[[:space:]]\([^[:space:]]\)/\1\n\2/g' -e 's/\r//g' > $(HEX_FILE)
+	@# cat $(TMP_HEX_FILE) | sed '/^@/d' > $(HEX_FILE)
+
+$(ARM_BIN_FILE): $(HEX_FILE)
+	# Generate a 32b-per-line version (ARM macro)
+	@perl -n -e 'printf "%032b\n",hex($$_) unless/@/' $(HEX_FILE) > $(ARM_BIN_FILE)
+
+
+# Note:
+# Objcopy use --adjust-vma so that the Verilog hex address start at address 0 instead of actual address 0x01000000
+#
+# If the version of object copy you are using does not support verilog hex file output,
+# you can generate the hex file from binary file using the following command
+#       od -v -A n -t x1 --width=1  $(TESTNAME).bin > $(TESTNAME).hex
+
+
+#####################################################################
+# Clean target
+#####################################################################
+clean :
+	@rm -rf $(GCC_OUT_DIR)
+	@rm -rf $(VERILOG_OUT_DIR)
+
+

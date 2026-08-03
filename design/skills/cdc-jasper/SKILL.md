@@ -30,7 +30,13 @@ synchroniser or a waiver.
   restoring so that class of bug is tool-caught, not found only in sim.
 - CDC needs the generated `.sv` + regs — run `make prepro`/`build_regs` first.
 
-## Sources (MSIC)
-`utils/chip_utils/config/Makefile.rtl` (`jcdc`/`jcdc_gui`),
-`doc/msic_methodology.md` (Jasper CDC/RDC section),
-`doc/rtl_bugs_found_in_verification.md` (#1 DAC command CDC).
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/Makefile.rtl`
+  - `references/msic_methodology.md`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

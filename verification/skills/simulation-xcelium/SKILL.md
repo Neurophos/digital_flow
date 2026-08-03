@@ -42,7 +42,14 @@ not minutes (a TB `.sv` change re-elaborates).
   licenses; retry when sims free.
 - Coverage merge/report: see the `coverage-closure` skill.
 
-## Sources (MSIC)
-`verif/uvm/Makefile`, `utils/verif_utils/config/Makefile.{verif,sim.firmware}`,
-`verif/uvm/scratch/msic_top.f`, `verif/uvm/tb/msic_tb_top_{hdl,hvl}.sv`
-(`+TIMEOUT_NS`).
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/Makefile.sim.firmware`
+  - `references/Makefile.uvm`
+  - `references/Makefile.verif`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

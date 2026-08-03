@@ -67,6 +67,16 @@ Pair with **formal** (`formal-verification`) for the same block — the two are
 complementary: UVM for datapath/coverage breadth, formal for exhaustive protocol
 invariants.
 
-## Sources (MSIC)
-`design/pf_ed/uvm/` (README, Makefile, common/env/agents/scoreboards/sequences/
-tests/tb), `design/pf_ed/config/pf_ed.yaml`, `design/pf_ed/rtl/pf_ed_wrapper.sv`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/examples/Makefile`
+  - `references/examples/pf_env.sv`
+  - `references/examples/pf_scoreboard.sv`
+  - `references/examples/pf_tb_pkg.sv`
+  - `references/README.md`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

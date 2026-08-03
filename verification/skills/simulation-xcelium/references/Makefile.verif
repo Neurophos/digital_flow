@@ -1,0 +1,472 @@
+#####################################################################
+# Include common project path setup
+#####################################################################
+include $(ROOT_DIR)utils/chip_utils/config/Makefile.common
+
+USE_ALCHEMY 				?= 1
+GATESIM							?= 0 
+SDF    							?= 0 
+
+
+#####################################################################
+# Sim tools
+#####################################################################
+SIM_TOOL					:= xrun
+
+
+#####################################################################
+# Need to assign defaults to testname and seed to build 
+#     simulation run directories. For this environment, if
+#     no TESTNAME is defined on the make command line, the
+#     idle_loop code will run to keep the ARM core in a 
+#     simple looping state (may change this behavior in the
+#     future). 
+#####################################################################
+# TESTNAME        			?= idle_loop
+SEED            			?= random
+TB_RUN_OPTS     			+= -svseed $(SEED)
+
+
+#####################################################################
+# This variable is used to force specific compile or run-time warnings 
+# 	to be considered fatal errors by Xcelium. The user can add additional
+# 	warnings in their own makefiles with: 
+#
+# 	XRUN_PROMOTE_TO_FATAL_LIST += <warning>
+#####################################################################
+# XRUN_PROMOTE_TO_FATAL_LIST	+= NOCOND
+
+
+#####################################################################
+# Set up any makefile specific paths now
+#####################################################################
+export LOCAL_VERIF_RUN_DIR	 := $(CURR_DIR)
+export SCRATCH_VERIF_RUN_DIR := $(SCRATCH_VERIF_DIR)$(TOP_TB)/
+
+export USE_SCRATCH_AREA		?= 0
+ifeq ($(GATESIM),1)
+export SIMNAME  := .gate_sims
+else 
+export SIMNAME  := .sims
+endif
+
+ifeq ($(USE_SCRATCH_AREA),1)
+export SIM_DIR				?= $(SCRATCH_VERIF_RUN_DIR)$(SIMNAME)/
+else
+export SIM_DIR				?= $(LOCAL_VERIF_RUN_DIR)$(SIMNAME)/
+endif
+
+# export MODULE_FILELIST		?= $(LOCAL_VERIF_RUN_DIR)$(TOP_MODULE).f
+# export TB_FILELIST			?= $(LOCAL_VERIF_RUN_DIR)$(TOP_TB).f
+# export MERGED_FILELIST		?= $(LOCAL_VERIF_RUN_DIR)merged.f
+export MODULE_FILELIST		?= $(SIM_DIR)$(TOP_MODULE).f
+export TB_FILELIST			?= $(SIM_DIR)$(TOP_TB).f
+export MERGED_FILELIST		?= $(SIM_DIR)merged.f
+
+
+#####################################################################
+# Variables which set up simulation build and run paths based
+# 	on whether we are running a regression (AGE or Vmanager) or
+# 	just running interactive.
+#####################################################################
+export REGRESSION			?= 0
+export REGRESSION_VMGR		?= 0
+export REGR_RUN_DIR			?= 
+export REGR_BUILD_DIR		?= 
+
+ifeq ($(REGRESSION),1)
+export SIM_RUN_DIR          := $(SIM_DIR)${MODEL}run_dir/$(TESTNAME)/$(SEED)/
+export SIM_BUILD_DIR		:= $(SIM_DIR)${MODEL}build_dir/
+else ifeq ($(REGRESSION_VMGR),1)
+export SIM_RUN_DIR          := $(REGR_RUN_DIR)/
+export SIM_BUILD_DIR        := $(REGR_BUILD_DIR)/
+else
+export SIM_RUN_DIR          := $(SIM_DIR)${MODEL}run_dir/
+export SIM_BUILD_DIR		:= $(SIM_DIR)${MODEL}build_dir/
+endif
+
+
+#####################################################################
+# For future use - to add capability to support AGE or LSF if needed
+#####################################################################
+export USE_LOCAL			?= 1
+
+ifeq ($(GUI),1)
+export AGE_QUEUE			?= interactive
+else
+export AGE_QUEUE			?= short
+endif
+
+ifeq ($(USE_LOCAL),1)
+ JOB_QUEUE_SUB_CMD 			:=
+ REGRESS_OPTS 				:=
+ XCELIUM_LIC_REQ 			:=
+endif
+
+ifeq ($(USE_AGE),1)
+ ifeq (${WAIT_FOR_JOB},1)
+  AGE_EXTRA_OPTS = -sync y
+ endif
+ ifeq ($(REGRESSION),1)
+  export JOB_QUEUE_SUB_CMD	:= $(AGE_SUB_BATCH) -q $(AGE_QUEUE) $(AGE_EXTRA_OPTS)
+ else ifeq ($(REGRESSION_VMGR),1)
+  export JOB_QUEUE_SUB_CMD	:=
+ else
+  export JOB_QUEUE_SUB_CMD	:= $(AGE_SUB_INTERACTIVE) -q $(AGE_QUEUE) $(AGE_EXTRA_OPTS)
+ endif
+endif
+
+export LSF_QUEUE           ?= normal
+export LSF_NUM_CPU         ?= 1
+       LSF_MEM             ?= 50G
+
+
+ifeq ($(USE_LSF),1)
+ REGRESS_OPTS = --lsf
+ ifeq (${WAIT_FOR_JOB},1)
+  LSF_EXTRA_OPTS = -K
+ endif
+ ifeq ($(REGRESSION),1)
+  export JOB_QUEUE_SUB_CMD   := $(LSF_SUB_BATCH) -q $(LSF_QUEUE) -n $(LSF_NUM_CPU) -R "rusage[mem=$(LSF_MEM)]" $(LSF_EXTRA_OPTS) 
+ else ifeq ($(REGRESSION_VMGR),1)
+  export JOB_QUEUE_SUB_CMD	:=
+ else
+  export JOB_QUEUE_SUB_CMD   := $(LSF_SUB_INTERACTIVE) -q $(LSF_QUEUE) -n $(LSF_NUM_CPU) -R "rusage[mem=$(LSF_MEM)]" $(LSF_EXTRA_OPTS) 
+ endif
+ ifeq ($(REGRESSION_VMGR),1)
+  XCELIUM_LIC_REQ = 
+ else
+  XCELIUM_LIC_REQ = -R "rusage[Xcelium=1]"
+ endif
+endif
+
+
+#####################################################################
+#####################################################################
+
+
+#####################################################################
+# Scripts for processing the YAML files
+#####################################################################
+export MERGE_MANIFEST		:= $(CHIP_UTILS_DIR)scripts/build_manifest/merge_manifest2.pl
+export CLEAN_REGS_UTIL		:= $(CHIP_UTILS_DIR)scripts/build_manifest/clean_regs.pl
+export BUILD_REGS_UTIL		:= $(CHIP_UTILS_DIR)scripts/build_manifest/build_regs.pl
+export ALCHEMY              := $(CHIP_UTILS_DIR)scripts/alchemy
+
+
+#####################################################################
+# Simulator Options
+#####################################################################
+export BUILD_HISTORY_FILE	:= $(SIM_BUILD_DIR)xrun.history
+export BUILD_LOG_FILE		:= $(SIM_BUILD_DIR)xrun.build.log
+export RUN_LOG_FILE  		:= $(SIM_RUN_DIR)xrun.log
+
+export MODULE_FILELIST_OPTS := -f $(MODULE_FILELIST) 
+export TB_FILELIST_OPTS		:= -f $(TB_FILELIST) 
+export MERGED_FILELIST_OPTS	:= -f $(MERGED_FILELIST) 
+
+export XRUN_BASE_OPTS		:= -64bit -sv -uvm -disable_sem2009 -access +rc +libext+.v+.sv+.vp+.vlib -enable_work_yvlib -newperf -plusperf 
+
+# This variable is used to force any warnings or errors into fatal errors during simulation which 
+# 	are defined in the XRUN_PROMOTE_TO_FATAL_LIST variable
+ifneq (,$(XRUN_PROMOTE_TO_FATAL_LIST))
+export XRUN_BASE_OPTS		+= -xmfatal $(XRUN_PROMOTE_TO_FATAL_LIST)
+endif
+
+export BUILD_DIR_OPTS		:= -xmlibdirname $(SIM_BUILD_DIR) -history_file $(BUILD_HISTORY_FILE)
+
+# These MUST be deferred assignments (= and not :=) to pick up changes to TB_RUN_OPTS later in the file
+export XRUN_BUILD_OPTS		= $(XRUN_BASE_OPTS) $(BUILD_DIR_OPTS) -l $(BUILD_LOG_FILE) -elaborate -snapshot $(TOP_TB)
+export XRUN_RUN_ONLY_OPTS	= $(XRUN_BASE_OPTS) $(BUILD_DIR_OPTS) -l $(RUN_LOG_FILE) -norebuild -snapshot $(TOP_TB)
+export XRUN_BUILD_RUN_OPTS	= $(XRUN_BASE_OPTS) $(BUILD_DIR_OPTS) -l $(RUN_LOG_FILE) -snapshot $(TOP_TB)
+
+# Coverage definitions / options
+export COVERAGE_DIR         := $(LOCAL_VERIF_RUN_DIR)coverage/
+export COV_FILE             := $(COVERAGE_DIR)covfile.ccf
+export COV_DUT              ?= $(TOP_MODULE)
+export COVERAGE_BUILD_OPTS  := -coverage A -covfile $(COV_FILE) -covdut $(COV_DUT) -covoverwrite
+export COVERAGE_RUN_OPTS    := -covtest $(TESTNAME) +func_cov
+
+# These are the default probe options which can be over-riden in the tb-specific file
+export XRUN_PROBE_OPTS      ?= -input "@database -open waves -into waves.shm -default; probe -create $(TOP_TB) -shm -depth all -all -memories -dynamic -inputs -outputs -ports -packed 0 -unpacked 0"
+
+
+#####################################################################
+### Command Line Options
+#####################################################################
+GUI             ?= 0
+ifeq ($(GUI),1)
+	XRUN_EXTRA_OPTS += -gui
+#	XRUN_EXTRA_OPTS += -verisium -lwdgen
+endif
+
+PROBE           ?= 0
+ifeq ($(PROBE),1)
+	XRUN_EXTRA_OPTS += $(XRUN_PROBE_OPTS)
+endif
+
+INDAGO			?= 0
+ifeq ($(INDAGO),1)
+	XRUN_EXTRA_OPTS += -indago $(INDAGO_OPTS)
+endif
+
+VERISIUM		?= 0
+ifeq ($(VERISIUM),1)
+	XRUN_EXTRA_OPTS += -verisium -lwdgen $(INDAGO_OPTS)
+endif
+
+### set the global timeout time in uS
+TIMEOUT         ?=0
+ifneq ($(TIMEOUT), 0)
+    XRUN_EXTRA_OPTS += +timeout=$(TIMEOUT)
+endif
+
+### To enable wave dumping to file
+WAVES           ?=0
+ifneq ($(WAVES), 0)
+    XRUN_EXTRA_OPTS += +waves=$(WAVES)
+endif
+
+# Options to turn wave dumping on and/or off (specify times, this are not binary)
+DUMPON          ?= 0
+DUMPOFF         ?= 0
+TB_RUN_OPTS     += +dumpon=$(DUMPON) +dumpoff=$(DUMPOFF)
+
+### Option to enable coverage
+COV             ?= 0
+ifneq ($(COV), 0)
+    TB_BUILD_OPTS   += $(COVERAGE_BUILD_OPTS)
+    TB_RUN_OPTS     += $(COVERAGE_RUN_OPTS)
+endif
+
+### Any additional other options
+OPTIONS     	?=
+ifneq ($(OPTIONS), )
+TB_RUN_OPTS     += $(OPTIONS)
+endif
+
+
+#####################################################################
+# Add the testbench-specific options to the extra options
+#####################################################################
+XRUN_BUILD_OPTS        += $(TB_BUILD_OPTS) $(USER_BUILD_OPTS)
+XRUN_RUN_ONLY_OPTS     += $(TB_RUN_OPTS) $(XRUN_WARN_TO_ERROR)
+XRUN_BUILD_RUN_OPTS    += $(TB_BUILD_OPTS) $(TB_RUN_OPTS) $(XRUN_WARN_TO_ERROR)
+
+
+#####################################################################
+# Create a variable to allow user to pass command line options
+#   to Simvision
+#####################################################################
+SIMV_OPTS				+= $(TB_SIMV_OPTS)
+
+
+#####################################################################
+### Targets
+#####################################################################
+.PHONY:	build_rtl build build_regs build_tb run run_no_build help simvision imcgui versions prepro
+
+# Preprocess *.py* RTL in all design and TB RTL dirs (run 'make prepro' in each)
+prepro:
+ifeq ($(USE_ALCHEMY),1)
+	@cd $(ROOT_DIR) && $(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -sim - -abs 2>/dev/null | while read f; do dirname "$$f"; done | sort -u | while read rtl_dir; do \
+	  if [ -f "$$rtl_dir/Makefile" ]; then echo "Prepro design: $$rtl_dir" ; $(MAKE) -C $$rtl_dir prepro ; fi; \
+	done
+	@cd $(ROOT_DIR) && $(ALCHEMY) -ws $(ROOT_DIR) -yaml $(TB_CONFIG_FILE) -top $(TOP_TB) -sim - -abs 2>/dev/null | while read f; do dirname "$$f"; done | sort -u | while read rtl_dir; do \
+	  if [ -f "$$rtl_dir/Makefile" ]; then echo "Prepro tb:     $$rtl_dir" ; $(MAKE) -C $$rtl_dir prepro ; fi; \
+	done
+endif
+
+# Target to build the simulation directory and link if building in the user's scratch space
+$(SIM_DIR): 
+	@mkdir -p $(SIM_DIR)
+ifeq ($(USE_SCRATCH_AREA),1)
+	@ln -fs $(SIM_DIR) $(SIMNAME)
+endif
+
+# Target to create directory for building the sim model
+$(SIM_BUILD_DIR): | $(SIM_DIR)
+	@mkdir -p $(SIM_BUILD_DIR)
+
+# Target to create the directory for running the simulation
+$(SIM_RUN_DIR): 
+	@mkdir -p $(SIM_RUN_DIR)
+
+# Target to build the manifest .f file for the testbench
+$(TB_FILELIST): $(TB_CONFIG_FILE) | $(SIM_DIR)
+ifeq ($(USE_ALCHEMY),1)
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(TB_CONFIG_FILE) -top $(TOP_TB) -sim $(TB_FILELIST) -abs
+else
+	@$(BUILD_MANIFEST) -yaml=$(TB_CONFIG_FILE) -top=$(TOP_TB) -out=$(TB_FILELIST) -test_exists
+endif
+
+# Target to build the manifest .f file for the design
+$(MODULE_FILELIST): $(DESIGN_CONFIG_FILE) prepro | $(SIM_DIR)
+ifeq ($(GATESIM),1)
+	@ln -fs $(CURR_DIR)bombur_gates.f $(MODULE_FILELIST) 
+else 
+ifeq ($(USE_ALCHEMY),1)
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -sim $(MODULE_FILELIST) -abs
+else
+	@$(BUILD_MANIFEST) -yaml=$(DESIGN_CONFIG_FILE) -top=$(TOP_MODULE) -out=$(MODULE_FILELIST) -test_exists
+endif
+endif
+
+# Target to merge the 2 manifest .f files to a single one for compilation
+$(MERGED_FILELIST): $(TB_FILELIST) $(MODULE_FILELIST)
+ifeq ($(GATESIM),1)
+	@rm -f $(MERGED_FILELIST)
+	@ln -s $(CURR_DIR)bombur_gates.f_file $(MERGED_FILELIST)
+else
+	$(MERGE_MANIFEST) $(TB_FILELIST) $(MODULE_FILELIST) $(MERGED_FILELIST)
+endif
+
+# Target to build the registers for all modules involved
+build_regs: 
+
+ifeq ($(USE_ALCHEMY),1)
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(TB_CONFIG_FILE) -top $(TOP_TB) -quiet -abs -regs - | xargs -i make -C {}
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -quiet -abs -regs - | xargs -i make -C {}
+else
+	@$(BUILD_REGS_UTIL) -yaml=$(TB_CONFIG_FILE) -top=$(TOP_TB) 
+	@$(BUILD_REGS_UTIL) -yaml=$(DESIGN_CONFIG_FILE) -top=$(TOP_MODULE) 
+endif
+
+# Target to build the registers for all modules involved
+build_regs_tb:
+ifeq ($(USE_ALCHEMY),1)
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(TB_CONFIG_FILE) -top $(TOP_TB) -quiet -abs -regs - | xargs -i make -C {}
+else 
+	@$(BUILD_REGS_UTIL) -yaml=$(TB_CONFIG_FILE) -top=$(TOP_TB) 
+endif
+
+# Target to build (only) the simulation model (testbench + RTL)
+build: build_regs $(MERGED_FILELIST) $(BUILD_DEP) | $(SIM_BUILD_DIR)
+	@$(JOB_QUEUE_SUB_CMD) $(XCELIUM_LIC_REQ) $(SIM_TOOL) $(MERGED_FILELIST_OPTS) $(XRUN_BUILD_OPTS) -top $(TOP_TB) 
+
+# Target to build the RTL design only
+build_rtl: build_regs $(MODULE_FILELIST) | $(SIM_BUILD_DIR) 
+	@$(JOB_QUEUE_SUB_CMD) $(XCELIUM_LIC_REQ) $(SIM_TOOL) $(MODULE_FILELIST_OPTS) $(XRUN_BUILD_OPTS) -top $(TOP_MODULE)
+
+# Target to build the testbench only
+build_tb: build_regs_tb $(TB_FILELIST) | $(SIM_BUILD_DIR)
+	@xrun $(TB_FILELIST_OPTS) $(XRUN_BUILD_OPTS) -top $(TOP_TB)
+
+# Target to build and run the simulation
+run: build_regs $(MERGED_FILELIST) | $(SIM_BUILD_DIR) $(SIM_RUN_DIR)
+	@cd $(SIM_RUN_DIR) ; $(JOB_QUEUE_SUB_CMD) $(XCELIUM_LIC_REQ) $(SIM_TOOL) $(MERGED_FILELIST_OPTS) $(XRUN_BUILD_RUN_OPTS) $(XRUN_EXTRA_OPTS)
+
+# Target to run the simulation without rebuilding the model
+run_no_build: | $(SIM_RUN_DIR)
+	@cd $(SIM_RUN_DIR) ; $(JOB_QUEUE_SUB_CMD) $(XCELIUM_LIC_REQ) $(SIM_TOOL) $(XRUN_RUN_ONLY_OPTS) -r $(TOP_TB) $(XRUN_EXTRA_OPTS)
+
+# Target to build and run the simulation
+run_tb: build_regs_tb $(TB_FILELIST) | $(SIM_BUILD_DIR) $(SIM_RUN_DIR)
+	@cd $(SIM_RUN_DIR) ; $(JOB_QUEUE_SUB_CMD) $(XCELIUM_LIC_REQ) $(SIM_TOOL) $(TB_FILELIST_OPTS) $(XRUN_BUILD_RUN_OPTS) $(XRUN_EXTRA_OPTS)
+
+# Target to run the simulation
+run_tb_no_build: | $(SIM_RUN_DIR)
+	@cd $(SIM_RUN_DIR) ; $(JOB_QUEUE_SUB_CMD) $(XCELIUM_LIC_REQ) $(SIM_TOOL) $(XRUN_RUN_ONLY_OPTS) -r $(TOP_TB) $(XRUN_EXTRA_OPTS)
+
+regress:
+	$(ROOT_DIR)utils/verif_utils/scripts/regress.pl --ws_dir $(ROOT_DIR) --testlist $(REGRESS_LIST) --quiet $(REGRESS_OPTS)
+
+%_regress:
+	$(MAKE) regress REGRESS_LIST=regr/$*_regress.list 
+
+# Target to launch the simvision tool for waveforms
+simvision:
+	@cd $(SIM_RUN_DIR) ; $(JOB_QUEUE_SUB_CMD) simvision $(SIMV_OPTS) &
+
+# Target to launch imc in gui 
+imcgui:
+	@$(JOB_QUEUE_SUB_CMD) imc -gui &
+
+# Dump versions of tools for debug help
+versions:
+	which xrun
+	which simvision
+	which indago
+	which verisium
+
+# Target to clean all of the generated files
+#   Use the double-colon rule to allow the clean target here to also run 
+#   along with the target in the primary makefile
+clean::
+ifeq ($(USE_ALCHEMY),1)
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(TB_CONFIG_FILE) -top $(TOP_TB) -quiet -abs -regs - | xargs -i make -C {} clean
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -quiet -abs -regs - | xargs -i make -C {} clean
+else
+	@$(CLEAN_REGS_UTIL) -yaml=$(TB_CONFIG_FILE) -top=$(TOP_TB)
+	@$(CLEAN_REGS_UTIL) -yaml=$(DESIGN_CONFIG_FILE) -top=$()
+endif
+	@rm -rf $(SIM_DIR)
+ifeq ($(USE_SCRATCH_AREA),1)
+	@rm -rf .sims 
+endif
+	@rm -f  *.f *.log $(TOP_TB)/*.f
+	@rm -f  xrun.*
+	@rm -rf .simvision
+	@rm -rf waves.shm
+ifeq ($(NEED_VIP_LIB_DIR),1)
+	@echo "Lib installation dir \"vip_lib\" not removed, if desire remove manualy!!!!!!!!!!!!!!!"
+endif
+
+# Target to clean all of the generated files
+#   Use the double-colon rule to allow the clean target here to also run 
+#   along with the target in the primary makefile
+clean_tb::
+ifeq ($(USE_ALCHEMY),1)
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(TB_CONFIG_FILE) -top $(TOP_TB) -quiet -abs -regs - | xargs -i make -C {} clean
+else
+	@$(CLEAN_REGS_UTIL) -yaml=$(TB_CONFIG_FILE) -top=$(TOP_TB)
+endif
+	@rm -rf $(SIM_DIR)
+ifeq ($(USE_SCRATCH_AREA),1)
+	@rm -rf .sims
+endif
+	@rm -f  *.f *.log
+	@rm -f  $(TOP_TB)/*.f
+	@rm -f  xrun.*
+	@rm -rf  *.d
+	@rm -rf .simvision
+	@rm -rf waves.shm
+ifeq ($(NEED_VIP_LIB_DIR),1)
+	@echo "Lib installation dir \"vip_lib\" not removed, if desire remove manualy!!!!!!!!!!!!!!!"
+endif
+
+help:
+	@echo ""
+	@echo "#####################################################################"
+	@echo "#    Help information for simulation makefile"
+	@echo "#"
+	@echo "#    Usage:"
+	@echo "#        make <target> <options> <TESTNAME=your_test_name>"
+	@echo "#"
+	@echo "#    Targets: "
+	@echo "#        prepro       - preprocess *.py* RTL in all design RTL dirs (run before/instead of build)"
+	@echo "#        build_rtl    - compile design RTL source only"
+	@echo "#        build        - compile RTL source and generate simulation executable"
+	@echo "#        run          - call build target and then launch simulation"
+	@echo "#        run_no_build - launch simulation without rebuilding executable"
+	@echo "#        simvision    - launch simvision app for saved waveforms viewing/debugging." 
+	@echo "#        regress         - launch a regression, users variable REGRESS_LIST to find list file" 
+	@echo "#        release_regress - launch a tb release regression" 
+	@echo "#        daily_regress   - launch a tb daily regression" 
+	@echo "#"
+	@echo "#    Options: "
+	@echo "#        GUI=1           : Open the Simvision debug GUI after compilation"
+	@echo "#        PROBE=1         : Intended to be used with GUI=1, this will automically probe all signals"
+	@echo "#        INDAGO=1        : Run simulation with Indago instead of simvision" 
+	@echo "#        TIMEOUT=val     : set simulation time out in nS. Ex, timeout=60 -> timeout in 60nS"
+	@echo "#        TESTNAME=       : the ARM test code to compile and execute during the test"
+	@echo "#        SEED=val        : set the initial seed for UVM randomization (default = 1)"
+	@echo "#        WAVES=1         : save waveform. Default is no waveform dumping"
+	@echo "#        DUMPON=val      : turn on waves dumping at time val ns. Default is 0"
+	@echo "#        DUMPOFF=val     : turn off waves dumping at time val ns. Default is 0, no action"
+	@echo "#        REGRESSION=     : Modify run_dir with testname and seed for regression use (default = 0)"
+	@echo "#        REGRESSION_VMGR=: use vManager to launch regression (default = 0)"
+	@echo "#        COV=1           : Enable coverage dumping in simulation. (default = 0)"	
+	@echo "#        COV_DUT=        : For coverage, if the module to cover is not the top module, use this to specific the module for coverage"
+	@echo "#"
+

@@ -1,0 +1,36 @@
+# MSIC UVM Coverage Configuration File (CCF)
+#
+# Excludes analog IP, ARM IP, and PLL behavioral model from all coverage collection.
+# Loaded via: xrun ... -covfile coverage.ccf  (wired into Makefile when COV=1)
+#
+# CCF notes:
+#   Each command must be a single line (no backslash continuation).
+#   -all -instance /path...   deselects block+expr+toggle+FSM recursively from that instance down.
+#   -covergroup is excluded from -all; use a separate -covergroup line if needed (not needed here).
+#   ...  suffix on a path = include this instance AND ALL descendants.
+#   -covfile is parsed at elaboration time (xmelab), not simulation time.
+#
+# Instance paths use sim-hierarchy: /<hdl_top>/<dut_inst>/...
+#   HDL top:    msic_top_v_tb    (msic_tb_top_hdl.sv:29)
+#   DUT inst:   u_msic_top       (msic_tb_top_hdl.sv:11)
+#
+# RTL anchors for instance names:
+#   u_AnaTop                         dac_ctrl.pysv:475
+#   u_CortexM4_Int                   cpuss.sv:341
+#   u_PLLTS22ULPHVFRACB_dont_touch   clock_ctrl.sv:234
+
+# AnaTop analog behavioral model — 64x64 holdcap pixel array, not stimulated in UVM (~98.7k items)
+deselect_coverage -all -instance /msic_top_v_tb/u_msic_top/u_digital_top/u_dac_ctrl/u_AnaTop...
+
+# ARM Cortex-M4 Integration IP — ARM licensed IP (NVIC, ETM, FPU, DWT, DAP/SWD) (~26.9k items)
+deselect_coverage -all -instance /msic_top_v_tb/u_msic_top/u_digital_top/u_cpuss/u_CortexM4_Int...
+
+# PLL behavioral model — vendor model + built-in assertions, clock gated in UVM (~20.8k items)
+deselect_coverage -all -instance /msic_top_v_tb/u_msic_top/u_digital_top/u_clock_ctrl/u_PLLTS22ULPHVFRACB_dont_touch...
+
+# SPI host AHB-to-TileLink bridge — orphaned RTL from the OpenTitan TL->APB port.
+# TileLink side is disconnected: tl_i is never assigned, tl_o is unused, and the
+# reg-file/data-FIFO windows are tied to TL_H2D_DEFAULT (spi_host.sv:81-88,272-275).
+# Register + FIFO access flows through the APB path (u_reg), not this bridge, so it
+# cannot toggle (was 2/382).  (~382 toggle items + 2 dead FSMs)
+deselect_coverage -all -instance /msic_top_v_tb/u_msic_top/u_digital_top/u_cpuss/u_cpuss_ahb_subsystem/u_spi_host/u_AHB_to_TL_Bridge...

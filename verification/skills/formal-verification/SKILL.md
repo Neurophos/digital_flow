@@ -87,6 +87,16 @@ Do both for a block: `uvm-block-level` for datapath/coverage breadth,
 timing bugs in pf_ed at depth 7–9 that a directed UVM test would have to
 specifically hit.
 
-## Sources (MSIC)
-`design/pf_ed/formal/` (Makefile, jg.tcl, sva/pf_ed_props.sv, mental_model.md,
-jg_html_report.py), `design/pf_ed/rtl/pf_ed_wrapper.sv`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/examples/pf_ed_props.sv`
+  - `references/mental_model.md`
+  - `scripts/jg_html_report.py`
+  - `scripts/jg.tcl`
+  - `scripts/Makefile`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

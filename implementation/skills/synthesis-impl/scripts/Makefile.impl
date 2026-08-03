@@ -1,0 +1,270 @@
+#####################################################################
+# Include common project path setup
+#####################################################################
+include $(ROOT_DIR)/utils/chip_utils/config/Makefile.common
+
+.EXPORT_ALL_VARIABLES:
+
+$(info PROJECT     : $(PROJECT))
+$(info WORKSPACE   : $(ROOT_DIR))
+$(info MODULE_NAME : $(TOP_MODULE))
+
+# ---------------------------------------------------------------------------- # execution
+
+SYN                         ?= genus -wait 3600
+
+# ---------------------------------------------------------------------------- # setup
+
+export WS					:= $(ROOT_DIR)
+
+export TOP                  ?= $(TOP_MODULE)
+
+export BUILDS_DIR           := $(CURDIR)/BUILDS
+export BUILD_DIR            := $(BUILDS_DIR)/$(BUILD)
+
+       IMPL_UTILS           := $(WS)/utils/impl_utils
+       CHIP_UTILS           := $(WS)/utils/chip_utils
+       PROJ_UTILS           := $(WS)/utils/proj_utils
+                           
+export CONSTRAINTS_DIR      := $(IMPL_DIR)/constraints
+       IMPL_SCRIPTS_DIR     := $(IMPL_DIR)/scripts
+#       IMPL_SCRIPTS_DIR     := $(IMPL_UTILS_DIR)/scripts
+
+       COPY_W_MANIFEST      := $(IMPL_UTILS_DIR)/scripts/copy_using_manifest.pl 
+
+       SYN_BUILD_DIR		:= $(BUILD_DIR)/syn
+		
+	   PROJ_INPUTS_DIR 		 = $(PROJ_UTILS_DIR)/common/inputs
+	   DESIGN_INPUTS_DIR 	 = $(PROJ_UTILS_DIR)/blocks/$(TOP)/inputs
+
+       LCF_DSGN_DIR			 = $(PROJ_UTILS)/blocks/$(TOP)/scripts/$(tool)/lcf
+
+export SYN_DIR				 = $(BUILD_DIR)/syn/
+export SYN_CONS_DIR			 = $(SYN_DIR)cons/
+export SYN_PHYSICAL_DIR		 = $(SYN_DIR)physical/
+export SYN_SCRIPTS_DIR		 = $(SYN_DIR)scripts/
+export SYN_SRC_DIR			 = $(SYN_DIR)src/
+export SYN_INCLUDE_DIR		 = $(SYN_DIR)include/
+export SYN_INTERFACE_DIR	 = $(SYN_DIR)intf/
+export SYN_OUTPUTS_DIR		 = $(SYN_DIR)outputs/
+export SYN_DB_DIR			 = $(SYN_DIR)db/
+export SYN_REPORTS_DIR		 = $(SYN_DIR)reports/
+export SYN_RUN_DIR			 = $(SYN_DIR)run/
+
+export SYN_TOP_SCRIPT		 = $(SYN_SCRIPTS_DIR)syn.tcl
+export SYN_RELOAD_SCRIPT	 = $(SYN_SCRIPTS_DIR)syn_reload.tcl
+
+export EXIT				 	 ?= 1
+
+export SYN_CORNER			 ?= SLOW
+
+
+# ---------------------------------------------------------------------------- # build, synthesis
+
+.PHONY: help test_defs clean_syn clean release_syn_build release_syn_build_full populate_syn_build syn_scripts_diff run_syn_physical run_syn_logical run_syn_elab run_syn_reload launch_genus 
+
+help:
+	$(call print_help)
+
+test_defs:
+	@if test -z "$(TOP)" ; then echo "" ; echo "  Variable TOP must be defined. Exiting..."; echo "" ; exit 1; fi
+	@if test -z "$(BUILD)" ; then echo "" ; echo "  Variable BUILD must be defined. Exiting..."; echo "" ; exit 1; fi
+
+$(BUILDS_DIR):
+	@echo "INFO: creating $(BUILDS_DIR) ..."
+	@mkdir -p  $(BUILDS_DIR)
+
+$(BUILD_DIR): | $(BUILDS_DIR)
+	@echo "INFO: creating $(BUILD_DIR) ..."
+	@mkdir -p  $(BUILD_DIR)
+
+populate_syn_build: test_defs | $(BUILD_DIR)
+	@# Confirm the directory doesn't exist or the user wants it to be overwritten
+	@if [ -d "$(SYN_DIR)" ]; then \
+		echo ""; echo ""; \
+		echo "BUILD directory $(SYN_DIR) already exists. ctrc-c to exit, enter to continue..."; \
+		echo ""; echo ""; \
+		read a; \
+	fi
+
+	@# Create the synthesis directories (input and output) if they do not already exist
+	@if [ ! -d "$(SYN_DIR)" ]; 				then mkdir $(SYN_DIR); 				fi
+	@if [ ! -d "$(SYN_CONS_DIR)" ]; 		then mkdir $(SYN_CONS_DIR); 		fi
+	@if [ ! -d "$(SYN_PHYSICAL_DIR)" ]; 	then mkdir $(SYN_PHYSICAL_DIR); 	fi
+	@if [ ! -d "$(SYN_SCRIPTS_DIR)" ]; 		then mkdir $(SYN_SCRIPTS_DIR); 		fi
+	@if [ ! -d "$(SYN_SRC_DIR)" ]; 			then mkdir $(SYN_SRC_DIR); 			fi
+	@if [ ! -d "$(SYN_INCLUDE_DIR)" ]; 		then mkdir $(SYN_INCLUDE_DIR); 		fi
+	@if [ ! -d "$(SYN_INTERFACE_DIR)" ];	then mkdir $(SYN_INTERFACE_DIR); 	fi
+	@if [ ! -d "$(SYN_OUTPUTS_DIR)" ]; 		then mkdir $(SYN_OUTPUTS_DIR); 		fi
+	@if [ ! -d "$(SYN_DB_DIR)" ]; 			then mkdir $(SYN_DB_DIR); 			fi
+	@if [ ! -d "$(SYN_REPORTS_DIR)" ]; 		then mkdir $(SYN_REPORTS_DIR);	 	fi
+	@if [ ! -d "$(SYN_RUN_DIR)" ]; 			then mkdir $(SYN_RUN_DIR); 			fi
+
+	@ echo "INFO: find regs to build ..."
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -quiet -top $(TOP_MODULE) -regs - | while read dir; do \
+	  echo "INFO: build regs in $(ROOT_DIR)/$$dir ..."; \
+	  make -C $(ROOT_DIR)/$$dir; \
+	  done
+	@ echo "INFO: build <TOP>.ws.f for synthesis ..."
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -syn $(SYN_DIR)$(TOP_MODULE).ws.f 
+	
+	@# Copy the base synthesis scripts into the SYN_SCRIPTS_DIR tree
+	@cp -r -p -u -f $(IMPL_SCRIPTS_DIR)/genus/*.tcl $(SYN_SCRIPTS_DIR). 			2> /dev/null || :
+	@chmod 644 $(SYN_SCRIPTS_DIR)* 	2> /dev/null || :
+ 
+	@# Copy the base common scripts into the SYN_SCRIPTS_DIR tree
+	@cp -r -p -u -f $(IMPL_SCRIPTS_DIR)/common/*.tcl $(SYN_SCRIPTS_DIR). 			2> /dev/null || :
+	@chmod 644 $(SYN_SCRIPTS_DIR)* 	2> /dev/null || :
+
+	@# Copy the proj common inputs into the SYN_SCRIPTS_DIR tree    
+	@cp -r -p -u -f $(PROJ_UTILS_DIR)/common/inputs/*.tcl $(SYN_SCRIPTS_DIR).  				2> /dev/null || :
+	@chmod 644 $(SYN_SCRIPTS_DIR)* 2> /dev/null || :
+
+	@# Copy the IP-specific synthesis scripts into the SYN_SCRIPTS_DIR tree
+	@if [ ! -d "$(PROJ_UTILS_DIR)/blocks/$(TOP)/scripts/genus/" ]; then \
+        cp -r -p -u -f $(PROJ_UTILS_DIR)/blocks/default/scripts/genus/*.tcl $(SYN_SCRIPTS_DIR). 			2> /dev/null || : ; \
+    else \
+        cp -r -p -u -f $(PROJ_UTILS_DIR)/blocks/$(TOP)/scripts/genus/*.tcl $(SYN_SCRIPTS_DIR). 			2> /dev/null || : ; \
+    fi
+	@chmod 644 $(SYN_SCRIPTS_DIR)* 	2> /dev/null || :
+
+	@# Copy the IP-specific common scripts into the SYN_SCRIPTS_DIR tree
+	@cp -r -p -u -f $(PROJ_UTILS_DIR)/common/scripts/genus/*.tcl $(SYN_SCRIPTS_DIR).  				2> /dev/null || :
+	@chmod 644 $(SYN_SCRIPTS_DIR)* 2> /dev/null || :
+	
+	@# Copy the synthesis constraints into the SYN_DIR tree
+	@cp -r -p -u -f $(CONSTRAINTS_DIR)/$(TOP)* $(SYN_CONS_DIR).  				2> /dev/null || :
+	@chmod 644 $(SYN_CONS_DIR)* 2> /dev/null || :
+
+	
+	@# Copy the source files into the SYN_DIR tree
+	@echo "INFO: copying source files and updating manifest (<TOP>.ws.f --> <TOP>.f) ..."
+	@$(COPY_W_MANIFEST) $(SYN_DIR)$(TOP_MODULE).ws.f $(SYN_DIR)$(TOP_MODULE).f $(SYN_DIR)/src '$$SYN_DIR/src'
+	@echo "Done:"
+	@tree -F -L 1 --noreport $(SYN_DIR)
+	@echo "Next:"
+	@echo "make run_syn_logical BUILD=$(BUILD)"
+
+define pnr_genus_startup_tcl =
+if {[info commands get_db] != {}} {
+	set_db source_verbose false
+}
+
+if {![info exists env(LCF_PATH)]} {
+    set env(LCF_PATH) ./scripts/root:./scripts/tool:./scripts/flow:./scripts/tech:./scripts/dsgn:.
+}
+
+source -quiet ./scripts/root/lcf.boot.tcl
+
+set_db max_cpus_per_server $$LC(NUM_CPUS)
+endef
+
+syn_run : tool = genus
+syn_run run_syn : init_any
+	@ cmd="" ; \
+	 if   [[ ! -z "$(DB)"                  ]]; then cmd="$$cmd ; lcf -read $(DB)"                          ; fi ; \
+	 if   [[ ! -z "$(RUN)" && ! -z "$(TO)" ]]; then cmd="$$cmd ; lcf -run $(RUN) -to $(TO)"                ;      \
+	 elif [[ ! -z "$(RUN)"                 ]]; then cmd="$$cmd ; lcf -run $(RUN)"                          ;      \
+	 elif [[ ! -z "$(TO)"                  ]]; then printf "\nERROR: cannot specify TO= w/o RUN=\n"; exit 1;      \
+	 else                                           cmd="$$cmd ; lcf -check"                               ; fi ; \
+	                                                cmd="$$cmd ; gui_show"                                      ; \
+	 echo "INFO: launching $(GENUS_CMD) and running: $$cmd" ; \
+	 cd $(SYN_BUILD_DIR); $(GENUS_CMD) -log ./logs/$(tool).$(lcf_tstamp) -execute "$$cmd"
+
+	@ echo "Next (just launch):"
+	@ echo "  make syn_run TOP=$(TOP) BUILD=$(BUILD)"
+	@ echo "Next (launch and load a DB):"
+	@ echo "  make syn_run TOP=$(TOP) BUILD=$(BUILD) DB=<name>"
+	@ echo "Next (Launch + start LCF):"
+	@ echo "  make syn_run TOP=$(TOP) BUILD=$(BUILD) RUN=init # TO=<step>"
+	@ echo ""
+	@ echo "Build-dir : $(SYN_BUILD_DIR)"
+
+
+run_syn_physical:
+	@echo
+	@echo $(SYN_DIR)
+	@echo
+
+	$(eval SYN_RUN=1)
+	$(eval SYN_RUN_PHYSICAL=1)	
+	@# Run the init scripts
+	cd $(SYN_RUN_DIR); $(SYN) -log $(SYN_RUN_DIR)syn.log -files $(SYN_TOP_SCRIPT)
+
+run_syn_logical:
+	@echo
+	@echo $(SYN_DIR)
+	@echo
+
+	$(eval SYN_RUN=1)
+	$(eval SYN_RUN_PHYSICAL=0)	
+	@# Run the init scripts
+	cd $(SYN_RUN_DIR); $(SYN) -log $(SYN_RUN_DIR)syn.log -files $(SYN_TOP_SCRIPT)
+
+run_syn_elab:
+	@echo
+	@echo $(SYN_DIR)
+	@echo
+
+	$(eval SYN_RUN=1)
+	$(eval SYN_RUN_ELAB=1)
+	$(eval SYN_RUN_PHYSICAL=0)	
+	@# Run the init scripts
+	cd $(SYN_RUN_DIR); $(SYN) -log $(SYN_RUN_DIR)syn_elab.log -files $(SYN_TOP_SCRIPT)
+
+run_syn_reload:
+	@echo
+	@echo $(SYN_DIR)
+	@echo
+	
+	$(eval SYN_RUN=0)
+	@echo $(SYN_RUN)
+	@# Run the init scripts
+	@#cd $(SYN_RUN_DIR); $(SYN) -log $(SYN_RUN_DIR)syn_reload.log -files $(SYN_TOP_SCRIPT)
+	cd $(SYN_RUN_DIR); $(SYN) -log $(SYN_RUN_DIR)syn_reload.log -files $(SYN_RELOAD_SCRIPT)
+
+launch_genus:
+	@echo
+	@echo $(SYN_DIR)
+	@if [ ! -d "$(SYN_DIR)" ]; 			then mkdir $(SYN_DIR); 			fi
+	@# Run the init scripts
+	cd $(SYN_DIR); $(SYN) 
+
+
+#########################
+### Update  Help info
+#########################
+define print_help
+    @echo ""
+    @echo "Missing make command parameters. Make format: "
+    @echo ""
+    @echo "    make <target> BUILD=<> TOP=<> <other options>"
+    @echo ""
+    @echo "WHERE:"
+    @echo "  target"
+    @echo "    synthesis targets   =  populate_syn_build					|	Populates all the collateral required to run synthesis	"
+    @echo "                           run_syn_elab						    |	Runs Synthesis till RTL elab and init_design	"
+    @echo "                           run_syn_physical						|	Runs Physical Synthesis	"
+    @echo "                           run_syn_logical						|	Runs Logical Synthesis	"
+    @echo "                           run_syn_reload						|	Reloads Synthesis	"
+    @echo ""
+    @echo "    BUILD        = directory under BUILDS/ where run takes place"
+    @echo "    TOP      	= top-level module name (defaults to MODULE_NAME = $(TOP_MODULE) (from IP))"
+    @echo "    SYN_CORNER   = override the default synthesis corner (SLOW|TYPICAL)"
+    @echo ""
+endef
+
+
+#########################
+### Clean targets
+#########################
+clean_syn:
+	@rm -rf $(SYN_DIR)
+
+clean:
+ifeq (,$(BUILD))
+	@echo "NOT cleaning as no BUILD= specified"
+else
+	rm -rf $(BUILD_DIR)
+endif
+

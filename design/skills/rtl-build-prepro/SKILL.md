@@ -42,9 +42,20 @@ in `utils/chip_utils/config/Makefile.rtl`.
 - alchemy `+/-` suffixes select `*_sim_only` / `*_syn_only` files; `...` on a path
   = that instance + all descendants.
 
-## Sources (MSIC)
-`utils/chip_utils/config/Makefile.rtl` (prepro/alchemy/build_rtl/build_regs),
-`utils/chip_utils/scripts/{prepro,alchemy}`, `scripts/compile_rtl.pl`,
-`scripts/soc_pylib/{read_sysinfo,read_pinout}.py`,
-`common_data/soc_sysinfo/msic_sysinfo.yaml`, module `config/*.yaml`,
-`doc/{python_prepro,digital_design_flow}.md`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `references/digital_design_flow.md`
+  - `references/Makefile.rtl`
+  - `references/msic_sysinfo.yaml`
+  - `references/python_prepro.md`
+  - `scripts/alchemy`
+  - `scripts/compile_rtl.pl`
+  - `scripts/prepro`
+  - `scripts/read_pinout.py`
+  - `scripts/read_sysinfo.py`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.

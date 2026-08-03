@@ -1,0 +1,133 @@
+#####################################################################
+# This Makefile will compile the TESTNAME source code to generate
+# 	the FLASH memory image required to preload into the ROM 
+# 	image of the design. Note this does not create any image
+# 	to load into the SRAM at this time, nor does it create the 
+# 	CMSDK-supplied ROM bootloader image. 
+#####################################################################
+
+
+#####################################################################
+# Makefile.common must be included before this Makefile as there
+# 	are variables used here which rely on that setup.
+#####################################################################
+
+
+#####################################################################
+# Set up any makefile specific paths now
+#####################################################################
+TESTS_BASE_DIR			?= $(FIRMWARE_DIR)
+
+TESTCASE_DIR			= $(TESTS_BASE_DIR)$(TESTNAME)/
+# TESTCASE_HEX_FILE 		= $(TESTCASE_DIR)verilog/$(TESTNAME).hex
+TESTCASE_BIN_FILE 		= $(TESTCASE_DIR)verilog/$(TESTNAME).arm.bin
+
+# SRAM_IMAGE_NAME			= sram.hex
+SRAM_IMAGE_NAME			= sram.bin
+SRAM_LINK_NAME			= $(SIM_RUN_DIR)$(SRAM_IMAGE_NAME)
+
+BOOTROM_DIR				= $(FIRMWARE_DIR)bootrom/
+# BOOTROM_HEX_FILE		= $(BOOTROM_DIR)verilog/bootrom.hex
+BOOTROM_BIN_FILE		= $(BOOTROM_DIR)verilog/bootrom.arm.bin
+
+# BOOTROM_IMAGE_NAME		= bootrom.hex
+BOOTROM_IMAGE_NAME		= bootrom.bin
+BOOTROM_LINK_NAME		= $(SIM_RUN_DIR)$(BOOTROM_IMAGE_NAME)
+
+# DEBUGTESTER_DIR			= $(FIRMWARE_DIR)debugtester/
+# DEBUGTESTER_HEX_FILE	= $(DEBUGTESTER_DIR)verilog/debugtester.hex
+
+# DEBUGTESTER_IMAGE_NAME	= debugtester.hex
+# DEBUGTESTER_LINK_NAME	= $(SIM_RUN_DIR)$(DEBUGTESTER_IMAGE_NAME)
+
+DUMMY_HEX_FILE_NAME		= $(CURR_DIR)dummy.hex
+DUMMY_HEX_LINK_NAME		= $(SIM_RUN_DIR)dummy.hex
+
+
+#####################################################################
+### Targets
+###   - add dependencies to targets here which add to the primary
+###     targets in Makefile.verif. Cannot add recipes to these 
+###  	targets here though or they override the main targets
+#####################################################################
+# .PHONY: run run_no_build clean_bootrom_image_link clean_debugtester_image_link clean_sram_image_link 
+.PHONY: run run_no_build clean_bootrom_image_link clean_sram_image_link 
+
+# $(TESTCASE_HEX_FILE):
+$(TESTCASE_BIN_FILE):
+ifeq ($(TESTCASE_DIR),1)
+	@echo "Info: C Test not found: "
+else
+	@echo "Info: Test found in: "
+	@echo $(TESTCASE_DIR)
+	@cd $(TESTCASE_DIR) ; make
+endif
+
+# Need to force-delete the image link, otherwise the link itself is likely newer than
+# 	the image when you run multiple tests, and therefore the link won't be recreated
+# $(SRAM_LINK_NAME): $(TESTCASE_HEX_FILE) | $(SIM_RUN_DIR)
+#	@ln -fs $(TESTCASE_HEX_FILE) $(SRAM_LINK_NAME)
+$(SRAM_LINK_NAME): $(TESTCASE_BIN_FILE) | $(SIM_RUN_DIR)
+	@ln -fs $(TESTCASE_BIN_FILE) $(SRAM_LINK_NAME)
+
+clean_sram_image_link:
+	@rm -f $(SRAM_LINK_NAME)
+
+
+#
+# Targets for the bootrom image
+# 
+# $(BOOTROM_LINK_NAME): $(BOOTROM_HEX_FILE) | $(SIM_RUN_DIR)
+$(BOOTROM_LINK_NAME): $(BOOTROM_BIN_FILE) | $(SIM_RUN_DIR)
+	@# We only link to the bootrom image, we do not recompile (not necessary)
+	@echo "Linking the bootrom image from $(BOOTROM_DIR)"
+	@#ln -fs $(BOOTROM_HEX_FILE) $(BOOTROM_LINK_NAME)
+	@ln -fs $(BOOTROM_BIN_FILE) $(BOOTROM_LINK_NAME)
+
+clean_bootrom_image_link:
+	@rm -rf $(BOOTROM_LINK_NAME)
+
+
+
+#
+# Targets for the debugtester image
+# 
+# $(DEBUGTESTER_LINK_NAME): $(DEBUGTESTER_HEX_FILE) | $(SIM_RUN_DIR)
+# 	@# We only link to the debugtester image, we do not recompile (not necessary)
+# 	@echo "Linking the debugtester image from $(DEBUGTESTER_DIR)"
+# 	@ln -fs $(DEBUGTESTER_HEX_FILE) $(DEBUGTESTER_LINK_NAME)
+
+# clean_debugtester_image_link:
+#	@rm -rf $(DEBUGTESTER_LINK_NAME)
+
+
+#
+# IFF the file dummy.hex exists, link it in the run directory
+# 
+$(DUMMY_HEX_LINK_NAME): clean_dummy_sram_image_link
+	@echo "Linking to dummy.hex if it exists"
+	@rm -f $(DUMMY_HEX_LINK_NAME)
+	@[ -f $(DUMMY_HEX_FILE_NAME) ] && ln -fs $(DUMMY_HEX_FILE_NAME) $(DUMMY_HEX_LINK_NAME)
+
+clean_dummy_sram_image_link:
+
+
+
+#
+# By only adding dependencies but not target-commands, we only need the single colon to 
+# 	add requirements to the run targets
+# 
+# run :  clean_sram_image_link $(BOOTROM_LINK_NAME) $(DEBUGTESTER_LINK_NAME) $(SRAM_LINK_NAME) $(DUMMY_HEX_LINK_NAME)
+run :  clean_sram_image_link $(BOOTROM_LINK_NAME) $(SRAM_LINK_NAME) $(DUMMY_HEX_LINK_NAME)
+
+# run_no_build:   $(BOOTROM_LINK_NAME) $(DEBUGTESTER_LINK_NAME) $(SRAM_LINK_NAME)
+run_no_build:   $(BOOTROM_LINK_NAME) $(SRAM_LINK_NAME)
+
+
+# Use the double-colon rule to allow the clean target here to also run
+#   along with the target in the primary makefile
+# clean:: clean_bootrom_image_link clean_debugtester_image_link clean_sram_image_link
+clean:: clean_bootrom_image_link clean_sram_image_link
+	@cd $(TESTS_BASE_DIR) ; make clean
+	@#if [ -d $(TESTCASE_DIR) ]; then cd $(TESTCASE_DIR) ; make clean ; fi
+

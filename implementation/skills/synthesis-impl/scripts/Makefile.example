@@ -1,0 +1,36 @@
+.EXPORT_ALL_VARIABLES:
+
+#####################################################################
+# Execute the following command to determine the root of
+#   the workarea. All paths will be relative to this.
+#####################################################################
+ROOT_DIR            := $(shell git rev-parse --show-toplevel)/
+
+
+#####################################################################
+# Define the following variables for the module to build
+#   - DESIGN_NAME - needs to be the directory name under 
+#                   TOT/design/<DESIGN_NAME> where the DUT exists. 
+#                   Should also be the base name of the config 
+#                   YAML file
+#   - TOP_MODULE  - the actual DUT module name which may or may not
+#                   be the same as DESIGN_NAME. ie: one may create
+#                   a testbench for a submodule from the full 
+#                   DESIGN_NAME module, and thus TOP_MODULE would be
+#                   different from DESIGN_NAME. If the DUT is the 
+#                   DESIGN_NAME module, set TOP_MODULE = DESIGN_NAME
+#####################################################################
+DESIGN_NAME         := digital_top
+TOP_MODULE          := digital_top
+
+
+#####################################################################
+# Include the impl Makefile
+#####################################################################
+include $(ROOT_DIR)/impl/Makefile.impl
+
+test:
+	echo $(PATH)
+
+
+

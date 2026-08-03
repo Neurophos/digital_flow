@@ -43,7 +43,15 @@ DB at `scratch/cov_work/scope/merged`. On completion:
 - Wall-clock ≈ 70 min for the full suite at 5 workers; a single slow test (DAC-SRAM
   read) is the long pole.
 
-## Sources (MSIC)
-`verif/uvm/run_regression.sh` (`evaluate_log`, `run_test_slow`, `run_test_nofabio`),
-`verif/uvm/run_regression_parallel.sh` (MAX_LIC, scratch_parN, add_job),
-`utils/verif_utils/scripts/regress.pl`, `verif/msic_top_v_tb/run_regression.py`.
+## Bundled here (self-contained — no external workspace paths)
+
+  - `scripts/regress.pl`
+  - `scripts/run_regression_parallel.sh`
+  - `scripts/run_regression.py`
+  - `scripts/run_regression.sh`
+
+## Provenance
+Distilled from the Neurophos MSIC digital flow; the bundled `references/`
+and `scripts/` are snapshots — regenerate against the live source if the
+flow evolves. Command paths in the body (e.g. `verif/uvm/`, `design/<blk>/`)
+are the *consuming project's* conventional layout, not this repo.
