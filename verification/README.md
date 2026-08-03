@@ -16,7 +16,8 @@ Supporting:
 - `skills/regression-parallel` — serial + license-aware parallel runners
 - `skills/coverage-closure` — IMC/Verisium merge, ccf + vRefine exclusion discipline, hole analysis
 - `skills/firmware-tbctrl` — msic_tests build, CMSDK, tb_ctrl stimulus injection
-- `skills/debug-bughunting` — coverage-holes→bugs, waveform probes, failure-masking traps
+- `skills/debug-bughunting` — coverage-holes→bugs, failure-masking traps
+- `skills/vcd-debug` — no-GUI waveform debug: targeted VCD dump + `analyze_waves.py` (parse edges/values/times, A/B diff)
 
 ## Generic assets
 - `scripts/cov_exclusions.tcl` — chip-agnostic vRefine loader

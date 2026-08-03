@@ -43,6 +43,7 @@ the code.
 | verification | `coverage-closure` |
 | verification | `firmware-tbctrl` |
 | verification | `debug-bughunting` |
+| verification | `vcd-debug` — no-GUI VCD debug (targeted dump + `analyze_waves.py`) |
 | implementation | `synthesis-impl` |
 | analog_digital_integration | `rnm-mixed-signal` |
 

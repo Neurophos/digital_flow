@@ -41,9 +41,12 @@ disabled UART-RX pads, incomplete interrupt RTL, and an unvalidated DAC read pat
   drive *defined* values (e.g. sweep 0xFF→0x00→0xFF) so toggles count cleanly.
 
 ## Waveform probing
-- Reusable VCD probe hooks exist behind Makefile knobs (e.g. `DAC_VCD=1`) to dump a
-  datapath (SRAM→ram_rdata→DAC) for root-causing; add one rather than eyeballing.
-- Run `make sim ... GUI=1 PROBE=1` for interactive Xcelium waves.
+- **No-GUI VCD debug is a skill of its own — see `vcd-debug`.** The agentic loop:
+  curate a small signal set → dump a targeted text VCD (`VCD=1` / `DAC_VCD=1` /
+  `FABIO_VCD=1` / …) → parse it with `analyze_waves.py` (exact edges/values/times,
+  A/B diff) instead of eyeballing a viewer. This is how the DAC datapath bug was
+  proven (read-enable never asserted → SRAM never flowed) and the fix confirmed.
+- Interactive fallback: `make sim ... GUI=1 PROBE=1` (Simvision, not headless).
 - Cross-check timestamps: UVM prints **ps**, the `$finish at time N NS` is real ns.
 
 ## Record it
