@@ -1,0 +1,626 @@
+##############################################################################
+# UVM Testbench Makefile — Xcelium (xrun)
+# Usage:
+#   make sim TESTNAME=msic_smoke_test
+#   make sim TESTNAME=msic_smoke_test WAVE=1          # dump waves to SHM
+#   make sim TESTNAME=msic_smoke_test GUI=1 PROBE=1
+##############################################################################
+
+# Bare `make` prints help instead of launching a build
+.DEFAULT_GOAL := help
+
+# Must be set before including Makefile.common so DESIGN_CONFIG_FILE resolves
+DESIGN_NAME := msic_top
+
+ROOT_DIR    := $(shell git rev-parse --show-toplevel)/
+
+# Pulls in: ALCHEMY, DESIGN_CONFIG_FILE, DESIGN_DIR, CURR_DIR, and all tool paths
+include $(ROOT_DIR)utils/chip_utils/config/Makefile.common
+
+UVM_DIR     := $(CURR_DIR)
+
+# Command-line options (TESTNAME must be set before RUN_DIR is expanded)
+TESTNAME         ?= msic_smoke_test
+# RUN_LABEL: decouples sim directory name from +UVM_TESTNAME (e.g. for clock variants)
+RUN_LABEL        ?= $(TESTNAME)
+FIRMWARE_TESTNAME ?=              # C firmware test to load (e.g. clock_ctrl_test1)
+GUI              ?= 0
+PROBE            ?= 0
+WAVE             ?= 0
+SEED             ?= 1
+TIMEOUT_NS       ?=               # empty -> use TB default (10,000,000 ns / 10 ms)
+COV              ?= 0             # 1 -> enable coverage generation
+COV_DUT          ?= msic_top     # module designated as DUT for coverage collection
+QSPI_MODEL       ?= 0            # 1 -> instantiate W25N01GVxxIG flash model (Category 2 Config 1)
+QUICKSPI         ?= 0            # 1 -> bypass baud divider (+define+QUICKSPI, Category 2 Config 2)
+FABIO_ASSERT     ?= 0             # 1 -> enable FabIO RTL assertions (+FABIO_ASSERT_ON)
+
+FIRMWARE_DIR    := $(ROOT_DIR)firmware/msic_tests/
+BOOTROM_BIN     := $(ROOT_DIR)firmware/bootrom/verilog/bootrom.arm.bin
+FW_BIN_DIR       = $(RUN_DIR)fw_bin/
+
+# Winbond flash model — shared with the legacy TB; path macros are overridden
+# with absolute paths so xrun can find the init files regardless of CWD.
+FLASH_MODEL_DIR := $(ROOT_DIR)verif/msic_top_v_tb/tb/winbond_w25n01gv/
+QSPI_FLASH_SRC  :=
+
+# -------------------------------------------------------------------------
+# Scratch tree — all build/sim artifacts live under scratch/
+#   scratch/hdl     : design (HDL) compilation artifacts
+#   scratch/hvl     : verif (HVL/UVM) compilation artifacts
+#   scratch/simland : elaboration snapshot + simulation artifacts (logs, waves)
+# -------------------------------------------------------------------------
+SCRATCH_DIR := $(UVM_DIR)scratch/
+HDL_DIR     := $(SCRATCH_DIR)hdl/
+HVL_DIR     := $(SCRATCH_DIR)hvl/
+SIMLAND_DIR := $(SCRATCH_DIR)simland/
+RUN_DIR     := $(SIMLAND_DIR)$(RUN_LABEL)/
+COV_WORKDIR := $(SCRATCH_DIR)cov_work
+COV_SCOPE   := $(COV_WORKDIR)/scope
+COV_MERGED  := $(COV_SCOPE)/merged
+
+# imc (coverage GUI / merge / report) ships with the vmanager package, and its
+# coverage engine comes from Xcelium (MDV_XLM_HOME) — set both up first.
+IMC_MODULE  := cadence/vmanager/25.09.003
+IMC_LOAD    := source /usr/share/Modules/init/bash && module load $(IMC_MODULE) && \
+               export MDV_XLM_HOME=$(XCELIUM_BASE_PATH) &&
+COV_REPORT_DIR := $(SCRATCH_DIR)cov_report
+
+# Xcelium default library container (worklib + snapshot) lives in scratch/
+XCELIUM_D   := $(SCRATCH_DIR)xcelium.d
+
+# Generated design filelist (produced by Alchemy from the YAML)
+MODULE_FILELIST := $(SCRATCH_DIR)$(DESIGN_NAME).f
+
+# Waveform database location (per-test, under simland)
+WAVE_DB     := $(RUN_DIR)waves.shm
+
+XRUN        := xrun
+
+# -------------------------------------------------------------------------
+# xrun flags — aligned with project XRUN_BASE_OPTS from Makefile.verif
+# -------------------------------------------------------------------------
+XRUN_BASE_OPTS := \
+    -64bit \
+    -sv \
+    -uvm \
+    -uvmhome CDNS-1.2 \
+    -timescale 1ns/1ps \
+    -disable_sem2009 \
+    -access +rc \
+    +libext+.v+.sv+.vp+.vlib \
+    -enable_work_yvlib \
+    -define NI_BEHAVIORAL \
+    -define SIMULATION \
+    -define ARM_UD_MODEL \
+    -define ARM_BACKDOOR_NOCEN \
+    -define ARM_DISABLE_EMA_CHECK \
+    -define UNIT_DELAY
+
+# -xmlibdirname takes the FULL PATH to the default library container
+# (xcelium.d, holding worklib + the elaboration snapshot) so it is created
+# under scratch/ rather than the current working directory. -history_file
+# and -l keep the build history and run log under simland/.
+XRUN_FLAGS := \
+    $(XRUN_BASE_OPTS) \
+    +UVM_TESTNAME=$(TESTNAME) \
+    +UVM_VERBOSITY=UVM_MEDIUM \
+    -svseed $(SEED) \
+    -xmlibdirname $(XCELIUM_D) \
+    -history_file $(SIMLAND_DIR)xrun.history \
+    -l $(RUN_DIR)sim.log \
+    +UART_LOG=$(RUN_DIR)uart.log
+
+# Pass the watchdog timeout to the TB only when overridden; otherwise the TB
+# uses its built-in default (10,000,000 ns).
+ifneq ($(strip $(TIMEOUT_NS)),)
+XRUN_FLAGS += +TIMEOUT_NS=$(TIMEOUT_NS)
+endif
+
+# When FIRMWARE_TESTNAME is given: compile the C test then copy both the test
+# firmware and the bootrom into fw_bin/ inside the test's scratch directory.
+# Absolute paths are passed to the RTL so that parallel regression runs never
+# clobber each other's firmware and the simulator can always find the files
+# regardless of its working directory.
+#   +SRAM_BIN    -> ahb_sram.v initial block (loadmem, runtime plusarg)
+#   ROM_FILE_NAME -> ahb_rom.v / rom22ull FILENAME parameter (compile-time define)
+ifneq ($(strip $(FIRMWARE_TESTNAME)),)
+FIRMWARE_BIN    := $(FIRMWARE_DIR)$(FIRMWARE_TESTNAME)/verilog/$(FIRMWARE_TESTNAME).arm.bin
+FW_BIN_DEST      = $(abspath $(FW_BIN_DIR)$(FIRMWARE_TESTNAME).arm.bin)
+BOOTROM_DEST     = $(abspath $(FW_BIN_DIR)bootrom.arm.bin)
+XRUN_FLAGS      += +FIRMWARE_TESTNAME=$(FIRMWARE_TESTNAME)
+XRUN_FLAGS      += +SRAM_BIN=$(FW_BIN_DEST)
+XRUN_FLAGS      += -define ROM_FILE_NAME='"$(BOOTROM_DEST)"'
+sim: $(FW_BIN_DEST) $(BOOTROM_DEST)
+$(FW_BIN_DEST): $(FIRMWARE_BIN) | $(FW_BIN_DIR)
+	@cp $(FIRMWARE_BIN) $(FW_BIN_DEST)
+	@echo "fw_bin: $(FW_BIN_DEST)"
+$(BOOTROM_DEST): $(BOOTROM_BIN) | $(FW_BIN_DIR)
+	@cp $(BOOTROM_BIN) $(BOOTROM_DEST)
+	@echo "fw_bin: $(BOOTROM_DEST)"
+$(FW_BIN_DIR):
+	mkdir -p $(FW_BIN_DIR)
+$(FIRMWARE_BIN):
+	$(MAKE) -C $(FIRMWARE_DIR)$(FIRMWARE_TESTNAME) all TESTNAME=$(FIRMWARE_TESTNAME)
+endif
+
+# COV=1 collects all coverage types into scratch/cov_work, scoped to COV_DUT.
+# View afterwards with: imc -load $(COV_WORKDIR)/scope/$(TESTNAME)
+COV_CCF     := $(UVM_DIR)coverage.ccf
+ifeq ($(COV),1)
+# -covtest uses RUN_LABEL (defaults to TESTNAME) so coverage-dir naming matches
+# the sim run-dir naming. This gives the FABIO_CLK clock variants their own
+# coverage dirs (fabio_burst_write_test_10mhz, ...) instead of colliding with
+# the base test's dir under a shared TESTNAME.
+XRUN_FLAGS += -coverage all \
+              -covoverwrite \
+              -covworkdir $(COV_WORKDIR) \
+              -covtest $(RUN_LABEL) \
+              -covdut $(COV_DUT) \
+              +func_cov \
+              -covfile $(COV_CCF)
+endif
+
+ifeq ($(GUI),1)
+XRUN_FLAGS += -gui
+endif
+
+ifeq ($(PROBE),1)
+XRUN_FLAGS += -input "@database -open waves -into waves.shm -default; \
+    probe -create msic_top_v_tb -shm -depth all -all -memories -dynamic"
+endif
+
+# WAVE=1 dumps a full-hierarchy SHM waveform database. In batch mode it
+# sets up probes, runs to completion, and exits; with GUI=1 it sets up the
+# probes and waits for the user to type 'run'.
+WAVE_PROBE := @database -open waves -into $(WAVE_DB) -default; \
+    probe -create msic_top_v_tb -shm -depth all -all -memories -dynamic
+ifeq ($(WAVE),1)
+ifeq ($(GUI),1)
+XRUN_FLAGS += -input "$(WAVE_PROBE)"
+else
+XRUN_FLAGS += -input "$(WAVE_PROBE); run; exit"
+endif
+endif
+
+# VCD=1 dumps a targeted VCD file with the UART1 internal signals plus the
+# cpu/reset domain signals useful for firmware test debugging. VCD is a
+# standard text format readable by gtkwave and parseable by scripts.
+# Use: make sim VCD=1 TESTNAME=... FIRMWARE_TESTNAME=...
+#      then: python3 scripts/analyze_waves.py scratch/simland/<test>/waves.vcd
+VCD_DB      := $(RUN_DIR)waves.vcd
+VCD_SIGNALS := msic_top_v_tb.sys_rst_n \
+               msic_top_v_tb.sys_clk \
+               msic_top_v_tb.u_msic_top.u_digital_top.u_cpuss.u_cpuss_apb_subsystem.gen_apb_uart_1.u_apb_uart_1.PCLK \
+               msic_top_v_tb.u_msic_top.u_digital_top.u_cpuss.u_cpuss_apb_subsystem.gen_apb_uart_1.u_apb_uart_1.PRESETn \
+               msic_top_v_tb.u_msic_top.u_digital_top.u_cpuss.u_cpuss_apb_subsystem.gen_apb_uart_1.u_apb_uart_1.TXD \
+               msic_top_v_tb.u_msic_top.u_digital_top.u_cpuss.u_cpuss_apb_subsystem.gen_apb_uart_1.u_apb_uart_1.tx_state \
+               msic_top_v_tb.u_msic_top.u_digital_top.u_cpuss.u_cpuss_apb_subsystem.gen_apb_uart_1.u_apb_uart_1.reg_ctrl \
+               msic_top_v_tb.u_uart_capture.rx_shift \
+               msic_top_v_tb.u_uart_capture.sim_end
+VCD_PROBE   := @database -open vcddb -into $(VCD_DB) -vcd -default; \
+    $(foreach sig,$(VCD_SIGNALS),probe -create $(sig) -database vcddb;)
+ifeq ($(VCD),1)
+ifeq ($(GUI),1)
+XRUN_FLAGS += -input "$(VCD_PROBE)"
+else
+XRUN_FLAGS += -input "$(VCD_PROBE) run; exit"
+endif
+endif
+
+# FABIO_VCD=1 dumps a targeted VCD of the FabIO C2T bypass debug signals.
+# Captures the full C2T signal chain from the TB pad wires down to the
+# fabio_tgt internal clock, reset, and FIFO control signals.
+# Use: make sim TESTNAME=fabio_cr_test NOFW=1 FABIO_VCD=1
+FABIO_VCD_DB := $(RUN_DIR)fabio_waves.vcd
+FABIO_VCD_SIGNALS := \
+    msic_top_v_tb.sys_rst_n \
+    msic_top_v_tb.fabio_c2t_clk \
+    msic_top_v_tb.fabio_if.c2t_valid \
+    msic_top_v_tb.fabio_if.c2t_credit \
+    msic_top_v_tb.fabio_if.t2c_credit \
+    msic_top_v_tb.fabio_if.t2c_clk \
+    msic_top_v_tb.fabio_c2t_clk_pio75_pad \
+    msic_top_v_tb.u_msic_top.chip_io_ie[75] \
+    msic_top_v_tb.u_msic_top.chip_io_pad2core[75] \
+    msic_top_v_tb.u_msic_top.u_digital_top.fabio_c2t_clk \
+    msic_top_v_tb.u_msic_top.u_digital_top.fabio_c2t_valid \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_c2t_clk \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_c2t_valid \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_c2t_mclk \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_c2t_clkg \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_en \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_c2t_rst_n \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.cmd_fifo_empty \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.fabio_t2c_credit \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_fabio_tgt.cmdfifo_pop \
+    msic_top_v_tb.u_msic_top.u_digital_top.u_gpio.chip_io_ie[75]
+FABIO_VCD_PROBE := @database -open fabiovcd -into $(FABIO_VCD_DB) -vcd -default; \
+    $(foreach sig,$(FABIO_VCD_SIGNALS),probe -create $(sig) -database fabiovcd;)
+ifeq ($(FABIO_VCD),1)
+ifeq ($(GUI),1)
+XRUN_FLAGS += -input "$(FABIO_VCD_PROBE)"
+else
+XRUN_FLAGS += -input "$(FABIO_VCD_PROBE) run; exit"
+endif
+endif
+
+# JTAG_VCD=1 dumps a targeted VCD of all five JTAG pad signals plus the
+# interface wires inside the HDL top.  Readable by gtkwave / any VCD viewer.
+# Use: make sim TESTNAME=jtag_probe_test JTAG_VCD=1
+JTAG_VCD_DB      := $(RUN_DIR)jtag_waves.vcd
+JTAG_VCD_SIGNALS := msic_top_v_tb.jtag_if.tck \
+                    msic_top_v_tb.jtag_if.tms \
+                    msic_top_v_tb.jtag_if.tdi \
+                    msic_top_v_tb.jtag_if.tdo \
+                    msic_top_v_tb.jtag_if.trst_n \
+                    msic_top_v_tb.jtck_pad \
+                    msic_top_v_tb.jtms_pad \
+                    msic_top_v_tb.jtdi_pad \
+                    msic_top_v_tb.jtdo_pad \
+                    msic_top_v_tb.jtrstn_pad
+JTAG_VCD_PROBE   := @database -open jtagvcd -into $(JTAG_VCD_DB) -vcd -default; \
+    $(foreach sig,$(JTAG_VCD_SIGNALS),probe -create $(sig) -database jtagvcd;)
+ifeq ($(JTAG_VCD),1)
+ifeq ($(GUI),1)
+XRUN_FLAGS += -input "$(JTAG_VCD_PROBE)"
+else
+XRUN_FLAGS += -input "$(JTAG_VCD_PROBE) run; exit"
+endif
+endif
+
+# DAC_VCD=1 — targeted VCD of the DAC SRAM write/read datapath (top half),
+# for debugging the SRAM->DAC programming path.  Captures the AHB write port,
+# the RAM macro-0 read/write ports, the FSM read address/enable, and the first
+# DAC output register.
+# Use: make sim TESTNAME=dac_datapath_test COV=1 DAC_VCD=1
+DAC_VCD_DB      := $(RUN_DIR)dac_waves.vcd
+DAC_TDC         := msic_top_v_tb.u_msic_top.u_digital_top.u_dac_ctrl.top_dac_ctrl
+DAC_VCD_SIGNALS := $(DAC_TDC).dac_clk \
+                   $(DAC_TDC).hclk \
+                   $(DAC_TDC).dac_ctrl_st \
+                   $(DAC_TDC).row_sel \
+                   $(DAC_TDC).image_sel \
+                   $(DAC_TDC).sram_wd_waddr \
+                   $(DAC_TDC).sram_wd_wdata \
+                   $(DAC_TDC).sram_we_n \
+                   $(DAC_TDC).sram_qw_waddr \
+                   $(DAC_TDC).sram_qw_raddr \
+                   $(DAC_TDC).sram_qw_re_n_prog \
+                   $(DAC_TDC).ram00_rdata \
+                   $(DAC_TDC).dac000_a_data \
+                   $(DAC_TDC).u_dac_rams.ram_waddr \
+                   $(DAC_TDC).u_dac_rams.ram_raddr \
+                   $(DAC_TDC).u_dac_rams.ram00_we_n \
+                   $(DAC_TDC).u_dac_rams.macro_wsel \
+                   $(DAC_TDC).u_dac_rams.sram_qw_wbitmask_n
+DAC_VCD_PROBE   := @database -open dacvcd -into $(DAC_VCD_DB) -vcd -default; \
+    $(foreach sig,$(DAC_VCD_SIGNALS),probe -create $(sig) -database dacvcd;)
+ifeq ($(DAC_VCD),1)
+ifeq ($(GUI),1)
+XRUN_FLAGS += -input "$(DAC_VCD_PROBE)"
+else
+XRUN_FLAGS += -input "$(DAC_VCD_PROBE) run; exit"
+endif
+endif
+
+# QSPI_MODEL=1 — instantiate W25N01GVxxIG in the HDL top (Category 2 Config 1).
+# The model is compiled into the HDL partition alongside the DUT. Path macros
+# are overridden with absolute paths so readmemh finds the init files from the
+# UVM TB's CWD (verif/uvm/) rather than the legacy TB's CWD (verif/msic_top_v_tb/).
+ifeq ($(QSPI_MODEL),1)
+XRUN_FLAGS  += -define QSPI_MODEL
+XRUN_FLAGS  += -define 'MEM_FILENAME_0="$(FLASH_MODEL_DIR)MEM.TXT"'
+XRUN_FLAGS  += -define 'MEM_FILENAME_1="$(FLASH_MODEL_DIR)MEM_IN.TXT"'
+XRUN_FLAGS  += -define 'UID_FILENAME="$(FLASH_MODEL_DIR)UID.TXT"'
+XRUN_FLAGS  += -define 'PARAM_FILENAME="$(FLASH_MODEL_DIR)PARAM.TXT"'
+XRUN_FLAGS  += -define 'OTP_FILENAME_0="$(FLASH_MODEL_DIR)OTP.TXT"'
+XRUN_FLAGS  += -define 'SREG_FILENAME="$(FLASH_MODEL_DIR)SREG.TXT"'
+XRUN_FLAGS  += -define 'LUT_FILENAME="$(FLASH_MODEL_DIR)BBM_LUT.TXT"'
+QSPI_FLASH_SRC := $(FLASH_MODEL_DIR)W25N01GVxxIG.v
+endif
+
+# QUICKSPI=1 — bypass the SPI host baud-rate divider (Category 2 Config 2).
+# Firmware compiled with QUICKSPI clocks SPI at PCLK rate; the UVM QSPI agent
+# must respond at that rate (no timing delay between bit transitions).
+ifeq ($(QUICKSPI),1)
+XRUN_FLAGS  += -define QUICKSPI
+endif
+
+ifeq ($(FABIO_ASSERT),1)
+XRUN_FLAGS  += +FABIO_ASSERT_ON
+endif
+
+# FABIO_CLK — select FabIO C2T clock frequency variant (mirrors legacy TB).
+#   10   -> FABIO_10MHZ  (10 MHz,  slow async stress)
+#   1000 -> FABIO_1GHZ   (1 GHz,   fast async stress)
+#   100  -> FABIO_100MHZ (100 MHz)
+#   200  -> FABIO_200MHZ (200 MHz)
+#   (default: ~83 MHz — no define needed)
+FABIO_CLK        ?=
+ifneq ($(FABIO_CLK),)
+ifeq ($(FABIO_CLK),10)
+XRUN_FLAGS  += -define FABIO_10MHZ
+else ifeq ($(FABIO_CLK),1000)
+XRUN_FLAGS  += -define FABIO_1GHZ
+else ifeq ($(FABIO_CLK),100)
+XRUN_FLAGS  += -define FABIO_100MHZ
+else ifeq ($(FABIO_CLK),200)
+XRUN_FLAGS  += -define FABIO_200MHZ
+endif
+endif
+
+# FABIO_NOCLK=1 — disable the free-running FabIO C2T clock for tests that do
+# not exercise the FabIO interface (e.g. gpio_output_test).  Prevents the pad
+# bus conflict that otherwise floods the log and slows simulation ~15000×.
+FABIO_NOCLK      ?=
+ifneq ($(FABIO_NOCLK),)
+XRUN_FLAGS += +FABIO_NOCLK=$(FABIO_NOCLK)
+endif
+
+# -------------------------------------------------------------------------
+# Include paths (for `include resolution inside packages)
+# -------------------------------------------------------------------------
+INCDIR := \
+    +incdir+$(UVM_DIR)env \
+    +incdir+$(UVM_DIR)sequences \
+    +incdir+$(UVM_DIR)tests \
+    +incdir+$(UVM_DIR)scoreboards \
+    +incdir+$(UVM_DIR)agents/fabio \
+    +incdir+$(UVM_DIR)agents/qspi \
+    +incdir+$(UVM_DIR)agents/gpio \
+    +incdir+$(UVM_DIR)agents/uart \
+    +incdir+$(UVM_DIR)agents/tb_ctrl \
+    +incdir+$(UVM_DIR)agents/jtag
+
+# -------------------------------------------------------------------------
+# Source partitions
+#   HDL (synthesizable): pin-level interfaces + the HDL top (DUT + pads)
+#   HVL (UVM)          : agent pkgs + tb pkg + the HVL top (run_test)
+# -------------------------------------------------------------------------
+INTERFACES := \
+    $(UVM_DIR)interfaces/msic_clk_rst_if.sv \
+    $(UVM_DIR)interfaces/msic_fabio_if.sv \
+    $(UVM_DIR)interfaces/msic_qspi_if.sv \
+    $(UVM_DIR)interfaces/msic_gpio_if.sv \
+    $(UVM_DIR)interfaces/msic_uart_if.sv \
+    $(UVM_DIR)interfaces/msic_apb_if.sv \
+    $(UVM_DIR)interfaces/msic_jtag_if.sv
+
+HDL_TOP          := $(UVM_DIR)tb/msic_tb_top_hdl.sv
+UART_CAPTURE_SV  := $(UVM_DIR)tb/msic_uart_capture.sv
+UVM_BIND_FILE    := $(UVM_DIR)tb/msic_tb_bind.sv
+
+# RTL-internal SVA modules compiled into the HDL partition.
+# Enable assertions at runtime with +FABIO_ASSERT_ON.
+SVA_FILES        := \
+    $(ROOT_DIR)verif/msic_top_v_tb/sva/fabio_tgt_sva.sv
+
+AGENT_PKGS := \
+    $(UVM_DIR)agents/fabio/fabio_pkg.sv \
+    $(UVM_DIR)agents/qspi/qspi_pkg.sv \
+    $(UVM_DIR)agents/gpio/gpio_pkg.sv \
+    $(UVM_DIR)agents/uart/uart_pkg.sv \
+    $(UVM_DIR)agents/tb_ctrl/tb_ctrl_pkg.sv \
+    $(UVM_DIR)agents/jtag/jtag_pkg.sv
+
+TB_PKG  := $(UVM_DIR)tb/msic_tb_pkg.sv
+HVL_TOP := $(UVM_DIR)tb/msic_tb_top_hvl.sv
+
+# -------------------------------------------------------------------------
+# Targets
+# -------------------------------------------------------------------------
+.PHONY: sim compile filelist clean help cov_gui cov_report cov_merge regress regress_parallel
+
+# Serial regression (all tests, one after another).
+#   make regress                 # text-mode, no coverage
+#   make regress COV=1
+regress:
+	./run_regression.sh $(if $(filter 1,$(COV)),COV=1) $(REGR_ARGS)
+
+# Parallel regression across N license-capped workers (default 5, <= free
+# Xcelium_Single_Core licenses).  Pass-through knobs:
+#   make regress_parallel                       # 5 workers (or fewer if fewer free)
+#   make regress_parallel COV=1
+#   make regress_parallel JOBS=8 MAX_LIC=6      # request 8, never exceed 6 licenses
+#   make regress_parallel SUBSET="msic_smoke_test fabio_cr_test"
+regress_parallel:
+	./run_regression_parallel.sh \
+	    $(if $(filter 1,$(COV)),COV=1) \
+	    $(if $(JOBS),JOBS=$(JOBS)) \
+	    $(if $(MAX_LIC),MAX_LIC=$(MAX_LIC)) \
+	    $(if $(SUBSET),SUBSET="$(SUBSET)") \
+	    $(REGR_ARGS)
+
+# HDL partition (design + interfaces + HDL top) compiles into scratch/hdl;
+# HVL partition (UVM pkgs + HVL top) into scratch/hvl. Global options
+# (-uvm, -define, +incdir, etc.) precede the -makelib blocks so they apply
+# across both libraries. Both module tops are elaborated.
+sim: $(MODULE_FILELIST) | $(HDL_DIR) $(HVL_DIR) $(RUN_DIR) $(XCELIUM_D)
+	$(XRUN) $(XRUN_FLAGS) $(INCDIR) \
+	    -makelib $(HDL_DIR) \
+	        -f $(MODULE_FILELIST) \
+	        $(INTERFACES) \
+	        $(UART_CAPTURE_SV) \
+	        $(QSPI_FLASH_SRC) \
+	        $(SVA_FILES) \
+	        $(HDL_TOP) \
+	        $(UVM_BIND_FILE) \
+	    -endlib \
+	    -makelib $(HVL_DIR) \
+	        $(AGENT_PKGS) \
+	        $(TB_PKG) \
+	        $(HVL_TOP) \
+	    -endlib \
+	    -top msic_top_v_tb \
+	    -top msic_tb_top_hvl
+
+# Compile and elaborate only (no simulation run). Useful for syntax/type checking.
+compile: $(MODULE_FILELIST) | $(HDL_DIR) $(HVL_DIR) $(RUN_DIR) $(XCELIUM_D)
+	$(XRUN) $(XRUN_FLAGS) $(INCDIR) \
+	    -makelib $(HDL_DIR) \
+	        -f $(MODULE_FILELIST) \
+	        $(INTERFACES) \
+	        $(UART_CAPTURE_SV) \
+	        $(QSPI_FLASH_SRC) \
+	        $(SVA_FILES) \
+	        $(HDL_TOP) \
+	        $(UVM_BIND_FILE) \
+	    -endlib \
+	    -makelib $(HVL_DIR) \
+	        $(AGENT_PKGS) \
+	        $(TB_PKG) \
+	        $(HVL_TOP) \
+	    -endlib \
+	    -top msic_top_v_tb \
+	    -top msic_tb_top_hvl \
+	    -norun
+
+# Generate the design filelist from the msic_top YAML via Alchemy
+$(MODULE_FILELIST): $(DESIGN_CONFIG_FILE) | $(SCRATCH_DIR)
+	@echo "Generating design filelist via Alchemy..."
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(DESIGN_NAME) -sim $(MODULE_FILELIST) -abs
+
+filelist: $(MODULE_FILELIST)
+	@echo "Design filelist: $(MODULE_FILELIST)"
+
+# Scratch directory tree (mkdir -p creates parents as needed)
+$(SCRATCH_DIR) $(HDL_DIR) $(HVL_DIR) $(SIMLAND_DIR) $(RUN_DIR) $(XCELIUM_D):
+	mkdir -p $@
+
+clean:
+	rm -rf $(SCRATCH_DIR) xcelium.d cds.lib hdl.var *.log *.key *.diag
+
+# Open the coverage report for TESTNAME in the IMC GUI (run 'make sim COV=1' first)
+cov_gui:
+	@test -d $(COV_SCOPE)/$(TESTNAME) || { \
+	    echo "No coverage data at $(COV_SCOPE)/$(TESTNAME)."; \
+	    echo "Run 'make sim COV=1 TESTNAME=$(TESTNAME)' first."; exit 1; }
+	$(IMC_LOAD) imc -64bit -gui -load $(COV_SCOPE)/$(TESTNAME) \
+	    -initcmd "source $(UVM_DIR)cov_exclusions.tcl" &
+
+# Non-interactive (batch) coverage report for TESTNAME: a full detailed HTML
+# report plus an uncovered-only report. Set REPORT_TEST=merged for the merge.
+REPORT_TEST ?= $(TESTNAME)
+cov_report:
+	@test -d $(COV_SCOPE)/$(REPORT_TEST) || { \
+	    echo "No coverage data at $(COV_SCOPE)/$(REPORT_TEST)."; \
+	    echo "Run 'make sim COV=1 TESTNAME=$(REPORT_TEST)' first."; exit 1; }
+	@mkdir -p $(COV_REPORT_DIR)
+	$(IMC_LOAD) imc -64bit -execcmd \
+	    "load -run $(COV_SCOPE)/$(REPORT_TEST); \
+	     source $(UVM_DIR)cov_exclusions.tcl; \
+	     report_metrics -detail -all -metrics all -source off -out $(COV_REPORT_DIR)/full -overwrite; \
+	     report_metrics -detail -uncovered -metrics all -source off -out $(COV_REPORT_DIR)/uncovered -overwrite; \
+	     exit"
+	@echo "Full report     : $(COV_REPORT_DIR)/full/index.html"
+	@echo "Uncovered report: $(COV_REPORT_DIR)/uncovered/index.html"
+
+# Merge every per-test coverage run under scratch/cov_work/scope into 'merged'.
+# View the result with: make cov_gui TESTNAME=merged
+cov_merge:
+	@runs=$$(find $(COV_SCOPE) -mindepth 1 -maxdepth 1 -type d ! -name merged 2>/dev/null); \
+	if [ -z "$$runs" ]; then \
+	    echo "No coverage runs found under $(COV_SCOPE)."; \
+	    echo "Run 'make sim COV=1 ...' for one or more tests first."; exit 1; \
+	fi; \
+	runfile=$$(mktemp); \
+	echo "$$runs" | tr ' ' '\n' | grep -v '^$$' > "$$runfile"; \
+	echo "Merging $$(wc -l < $$runfile) coverage runs via runfile..."; \
+	$(IMC_LOAD) imc -64bit -execcmd \
+	    "merge -runfile $$runfile -covmodeldir $(COV_SCOPE) -out $(COV_MERGED) -overwrite; exit"; \
+	rm -f "$$runfile"
+	@echo "Merged coverage written to $(COV_MERGED)"
+	@echo "View with: make cov_gui TESTNAME=merged"
+
+help:
+	@echo ""
+	@echo "============================================================================"
+	@echo " MSIC UVM Testbench  —  Xcelium (xrun)"
+	@echo "============================================================================"
+	@echo ""
+	@echo " Run all commands from this directory (verif/uvm)."
+	@echo ""
+	@echo " Usage:"
+	@echo "   make <target> [OPTION=value ...]"
+	@echo ""
+	@echo " Targets:"
+	@echo "   sim        Build (design + UVM TB) and run a test."
+	@echo "   filelist   (Re)generate the design .f filelist from the YAML via Alchemy."
+	@echo "   clean      Remove the scratch/ tree and any stray build artifacts."
+	@echo "   cov_gui    Open TESTNAME's coverage report in the IMC GUI (after COV=1)."
+	@echo "   cov_report Batch HTML coverage report (full + uncovered) for TESTNAME."
+	@echo "   cov_merge  Merge all per-test coverage runs into 'merged'."
+	@echo "   help       Show this message (default target)."
+	@echo ""
+	@echo " Options (pass as VAR=value on the command line):"
+	@echo "   TESTNAME=<name>          UVM test class to run              (default: $(TESTNAME))"
+	@echo "   FIRMWARE_TESTNAME=<name> C firmware test to load into SRAM  (default: none)"
+	@echo "                            Compiles firmware, links sram.bin, passes +FIRMWARE_TESTNAME"
+	@echo "   SEED=<N>                 Randomization seed (-svseed)       (default: $(SEED))"
+	@echo "   TIMEOUT_NS=<ns>          Watchdog timeout in ns             (default: 100000000 = 100 ms)"
+	@echo "   COV=1                    Enable coverage generation         (DUT: COV_DUT=$(COV_DUT))"
+	@echo "   WAVE=1                   Dump SHM waveforms to scratch/simland/<test>/waves.shm"
+	@echo "   VCD=1                    Dump targeted VCD (UART1 + capture signals) for script analysis"
+	@echo "   GUI=1                    Open the Simvision GUI after elaboration (then type 'run')"
+	@echo "   PROBE=1                  Auto-probe all signals (use with GUI=1)"
+	@echo "   QSPI_MODEL=1             Category 2 Config 1: instantiate W25N01GVxxIG flash model"
+	@echo "                            in the HDL top (DUT pads wired directly to the Winbond model;"
+	@echo "                            UVM QSPI agent is passive). Mirrors the legacy TB setup."
+	@echo "   QUICKSPI=1               Category 2 Config 2: compile +define+QUICKSPI, which bypasses"
+	@echo "                            the SPI host baud-rate divider so the UVM QSPI agent responds"
+	@echo "                            at PCLK rate. Use together with FIRMWARE_TESTNAME=spi_*."
+	@echo "   FABIO_ASSERT=1           Enable FabIO RTL assertions (+FABIO_ASSERT_ON)."
+	@echo "                            Activates fabio_tgt_sva properties (rlast invariants)."
+	@echo "                            Always on in run_regression.sh."
+	@echo ""
+	@echo " How to run (examples):"
+	@echo "   make sim                                            # default UVM smoke test"
+	@echo "   make sim TESTNAME=msic_smoke_test WAVE=1           # + dump waveforms"
+	@echo "   make sim TESTNAME=msic_smoke_test GUI=1 PROBE=1    # interactive debug"
+	@echo "   make sim TESTNAME=msic_cpu_base_test \\"
+	@echo "            FIRMWARE_TESTNAME=clock_ctrl_test1         # run a C firmware test"
+	@echo "   make sim TESTNAME=msic_cpu_base_test \\"
+	@echo "            FIRMWARE_TESTNAME=gpio_output_test \\"
+	@echo "            TIMEOUT_NS=50000000                        # 50 ms watchdog"
+	@echo "   make sim SEED=42                                    # custom seed"
+	@echo "   make sim COV=1                                      # run with coverage"
+	@echo "   make sim TESTNAME=msic_cpu_base_test \\"
+	@echo "            FIRMWARE_TESTNAME=spi_jedec_read_test \\"
+	@echo "            QSPI_MODEL=1                               # Cat 2 Config 1: flash model"
+	@echo "   make sim TESTNAME=msic_cpu_base_test \\"
+	@echo "            FIRMWARE_TESTNAME=spi_jedec_read_test \\"
+	@echo "            QUICKSPI=1                                 # Cat 2 Config 2: QSPI agent + QUICKSPI"
+	@echo "   make filelist                                        # regenerate design .f"
+	@echo "   make clean                                           # wipe scratch/"
+	@echo ""
+	@echo " Firmware test completion signalling (firmware must implement one or both):"
+	@echo "   UART (default):  firmware writes 0x04 (EOT) to UART1 in test mode."
+	@echo "                    NOTE: test mode bypasses the baud divider — data clocks at"
+	@echo "                    PCLK rate, NOT 115200 baud. The UVM UART agent (115200 baud)"
+	@echo "                    cannot decode this. msic_uart_capture.sv taps UART1 PCLK/TXD"
+	@echo "                    directly via XMR, prints lines to the sim log, and signals"
+	@echo "                    the UVM event 'uart_eot' on EOT so the sim ends via UVM."
+	@echo "   GPIO (optional): firmware drives GPIO[N] high when done. Enable with"
+	@echo "                    +GPIO_DONE_PIN=<N>. Useful if firmware has no UART EOT."
+	@echo ""
+	@echo " Artifact layout (all under scratch/):"
+	@echo "   scratch/hdl       design (HDL) compilation library"
+	@echo "   scratch/hvl       verif (HVL/UVM) compilation library"
+	@echo "   scratch/simland   logs, build history, and waveforms (per test)"
+	@echo "   scratch/xcelium.d default library container (worklib + snapshot)"
+	@echo ""
+	@echo " View waveforms (after WAVE=1):"
+	@echo "   simvision scratch/simland/<TESTNAME>/waves.shm &"
+	@echo ""
+	@echo " Analyse waveforms without a GUI (after VCD=1):"
+	@echo "   python3 scripts/analyze_waves.py scratch/simland/<TESTNAME>/waves.vcd"
+	@echo "   python3 scripts/analyze_waves.py waves_uvm.vcd waves_legacy.vcd   # side-by-side"
+	@echo ""
+	@echo " View coverage (after COV=1):"
+	@echo "   make cov_gui TESTNAME=<test>     (or: imc -64bit -gui -load scratch/cov_work/scope/<test> &)"
+	@echo "   make cov_merge                   merge all runs, then: make cov_gui TESTNAME=merged"
+	@echo ""
+	@echo " Available tests:"
+	@ls $(UVM_DIR)tests/*.sv 2>/dev/null | xargs -n1 -I{} basename {} .sv | sed 's/^/   /'
+	@echo ""

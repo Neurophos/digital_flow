@@ -1,0 +1,91 @@
+#####################################################################
+# NOTE - before arrive here, the ROOT_DIR should be set and the 
+#   common Makefile for the project should have been included to
+#   set up the environment variables. 
+#
+#   Also, the TARGET should be set to the module for which you 
+#   wish to build registers.
+#####################################################################
+
+SHELL := /bin/bash
+#####################################################################
+# Variable setup for regtool including the Python venv
+#####################################################################
+export PYTHONDONTWRITEBYTECODE	= 1
+
+REGTOOL_DIR						= $(ROOT_DIR)utils/chip_utils/scripts/regtools
+REGTOOL							= $(REGTOOL_DIR)/regtool.py
+
+# Moved to Makefile.common
+# PYTHON							= python3
+# export VENV_DIR					= $(ROOT_DIR)scripts/venv/
+# VENV_BIN_DIR					= $(VENV_DIR)bin/
+# VENV_ACTIVATE_SCRIPT			= source $(VENV_BIN_DIR)activate
+
+TARGET_RTL_DIR					=./rtl/
+TARGET_DV_DIR					=./dv/
+TARGET_INC_DIR					=./inc/
+TARGET_HTML_DIR					=./html/
+TARGET_PDF_DIR					=./pdf/
+TARGET_MD_DIR					=./md/
+
+REG_SRC_DIR						= ./reg_src
+REG_SRC							= $(REG_SRC_DIR)/$(TARGET).hjson
+
+SOURCES  						=  $(REG_SRC)
+SOURCES 						+= $(wildcard $(REGTOOL_DIR)/*.py)
+SOURCES 						+= $(wildcard $(REGTOOL_DIR)/reggen/*.py)
+SOURCES 						+= $(wildcard $(REGTOOL_DIR)/reggen/*.tpl)
+SOURCES 						+= $(wildcard $(REGTOOL_DIR)/topgen/*.py)
+
+.PHONY: all clean
+
+# all: $(TARGET_RTL_DIR)$(TARGET)_apb_adapter_reg.sv $(TARGET_DV_DIR)$(TARGET)_ral_pkg.sv $(TARGET_RTL_DIR)$(TARGET)_reg_pkg.sv $(TARGET_RTL_DIR)$(TARGET)_reg_top.sv $(TARGET_INC_DIR)$(TARGET).h $(TARGET_HTML_DIR)$(TARGET).html $(TARGET_PDF_DIR)$(TARGET).pdf $(TARGET_PDF_DIR)$(TARGET).md
+all: $(TARGET_RTL_DIR)$(TARGET)_apb_adapter_reg.sv  $(TARGET_RTL_DIR)$(TARGET)_reg_pkg.sv $(TARGET_RTL_DIR)$(TARGET)_reg_top.sv $(TARGET_INC_DIR)$(TARGET).h $(TARGET_HTML_DIR)$(TARGET).html $(TARGET_MD_DIR)$(TARGET).md
+	@echo "$(TARGET) register build complete " 
+
+$(TARGET_RTL_DIR):
+	@mkdir -p $(TARGET_RTL_DIR)
+
+$(TARGET_RTL_DIR)$(TARGET)_apb_adapter_reg.sv: $(SOURCES) | $(TARGET_RTL_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -r -t $(TARGET_RTL_DIR) $(REG_SRC)
+
+$(TARGET_RTL_DIR)$(TARGET)_pkg.sv: $(SOURCES) | $(TARGET_RTL_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -r -t $(TARGET_RTL_DIR) $(REG_SRC)
+
+$(TARGET_RTL_DIR)$(TARGET)_top.sv: $(SOURCES) | $(TARGET_RTL_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -r -t $(TARGET_RTL_DIR) $(REG_SRC)
+
+$(TARGET_DV_DIR):
+	@mkdir -p $(TARGET_DV_DIR)
+
+$(TARGET_DV_DIR)$(TARGET)_ral_pkg.sv: $(SOURCES) | $(TARGET_DV_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -s -t $(TARGET_DV_DIR) $(REG_SRC)
+
+$(TARGET_INC_DIR): 
+	@mkdir -p $(TARGET_INC_DIR)
+
+$(TARGET_INC_DIR)$(TARGET).h: $(SOURCES) | $(TARGET_INC_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -D -t $(TARGET_INC_DIR) $(REG_SRC) >$(TARGET_INC_DIR)/$(TARGET).h
+
+$(TARGET_HTML_DIR):
+	@mkdir -p $(TARGET_HTML_DIR)
+
+$(TARGET_HTML_DIR)$(TARGET).html: $(SOURCES) | $(TARGET_HTML_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -d -t $(TARGET_HTML_DIR) $(REG_SRC) >$(TARGET_HTML_DIR)/$(TARGET).html
+
+$(TARGET_PDF_DIR):
+	@mkdir -p $(TARGET_PDF_DIR)
+
+$(TARGET_PDF_DIR)$(TARGET).pdf: $(TARGET_HTML_DIR)$(TARGET).html | $(TARGET_PDF_DIR)
+	@/usr/local/bin/wkhtmltopdf --quiet --page-size A4 --margin-top 0.75in --margin-right 0.75in --margin-bottom 0.75in --margin-left 0.75in --encoding UTF-8 --enable-local-file-access --print-media-type $(TARGET_HTML_DIR)/$(TARGET).html $(TARGET_PDF_DIR)/$(TARGET).pdf
+
+$(TARGET_MD_DIR):
+	@mkdir -p $(TARGET_MD_DIR)
+
+$(TARGET_MD_DIR)$(TARGET).md: $(SOURCES) | $(TARGET_MD_DIR)
+	@$(VENV_ACTIVATE_SCRIPT) ; $(PYTHON) $(REGTOOL) -m -t $(TARGET_MD_DIR) $(REG_SRC)
+
+clean::
+	rm -rf $(TARGET_RTL_DIR) $(TARGET_INC_DIR) $(TARGET_HTML_DIR) $(TARGET_PDF_DIR) $(TARGET_DV_DIR) $(TARGET_MD_DIR)
+

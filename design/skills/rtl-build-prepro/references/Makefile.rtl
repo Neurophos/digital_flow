@@ -1,0 +1,194 @@
+#####################################################################
+# Makefile for RTL operations.   Intended to service targets called 
+# 	from the rtl directory and run rtl specific commands (lint, hal, build_rtl)
+# 
+# NOTE - before arrive here, the ROOT_DIR should be set 
+#
+#   Also, the TOP_MODULE variable should be set to identify the
+#   top-level module to start processing lint with HAL
+#####################################################################
+
+include $(ROOT_DIR)utils/chip_utils/config/Makefile.common
+
+# When invoked as a sub-make from the TB build (which uses .EXPORT_ALL_VARIABLES),
+# the __MAKEFILE_COMMON__ guard in Makefile.common is already set, so SHELL and
+# CURR_DIR are never re-assigned by that file. Reset them here unconditionally so
+# that prepro recipes run under bash and wildcard expansion targets the correct
+# local RTL directory rather than the parent make's working directory.
+SHELL    := /bin/bash
+CURR_DIR := $(CURDIR)/
+
+
+#####################################################################
+# Python-preprocessed RTL (*.py* -> same dir, "py" removed from ext)
+#####################################################################
+export PREPRO_SCRIPT				:= $(ROOT_DIR)utils/chip_utils/scripts/prepro
+export PREPRO_VENV_PYTHON			:= $(ROOT_DIR)scripts/venv/bin/python
+
+# Discover any *.py* RTL files; design Makefiles may add more via PREPRO_FILES +=
+PREPRO_FILES						+= $(wildcard $(CURR_DIR)*.pysv) $(wildcard $(CURR_DIR)*.pyv) $(wildcard $(CURR_DIR)*.pysvh) $(wildcard $(CURR_DIR)*.pyvh)
+
+# Output path: same directory as source, extension with "py" removed (e.g. .pysv -> .sv)
+# Note: $(suffix) may include leading dot (e.g. .pysv), so strip it before removing "py"
+_prepro_out = $(if $(dir $(1)),$(dir $(1)),$(CURR_DIR))$(basename $(notdir $(1))).$(subst py,,$(patsubst .%,%,$(suffix $(1))))
+PREPRO_OUTPUTS						:= $(foreach f,$(PREPRO_FILES),$(call _prepro_out,$(f)))
+
+#####################################################################
+# Jasper Super lint Options and variables 
+#####################################################################
+
+export JASPER_DIR					:= $(CURR_DIR).jasper/
+export JASPER_RUN_DIR				:= $(JASPER_DIR)
+export JASPER_FILELIST         		:= $(JASPER_RUN_DIR)$(TOP_MODULE).f
+
+# Superlint related files 
+export SL_RUN_TCL_FILE  			:= $(CURR_DIR)../config/$(TOP_MODULE).sl.tcl
+export SL_RUN_CMD_OPTS				:= -superlint -batch -tcl $(SL_RUN_TCL_FILE) -allow_unsupported_OS
+export SL_RELOAD_TCL_FILE  			:= $(CHIP_UTILS_DIR)scripts/lint/sl_reload.tcl 
+export SL_RELOAD_CMD_OPTS			:= -superlint -tcl ${SL_RELOAD_TCL_FILE}
+
+# Jasper CDC related files 
+export JCDC_RUN_TCL_FILE			:= $(DESIGN_CONFIG_DIR)${TOP_MODULE}_cdc_config.tcl
+export JCDC_RUN_CMD_OPTS			:= -cdc -tcl $(JCDC_RUN_TCL_FILE)
+
+
+#####################################################################
+# HAL lint Options and variables 
+#####################################################################
+
+export HAL_DIR             			:= $(CURR_DIR).hal/
+export HAL_RUN_DIR         			:= $(HAL_DIR)
+export HAL_FILELIST         		:= $(HAL_RUN_DIR)$(TOP_MODULE).f
+export HAL_LOG_FILE        			:= $(HAL_RUN_DIR)lint.log
+
+# lexpragma needed to parse prama wihtin the hdl code (example : // lint_checking BADSYS off )
+export HAL_BASE_OPTS       			:= -design_info hal.design_info -SV -TOP $(TOP_MODULE) -no_design_facts -pragma -lintpragma -lexpragma
+export HAL_RUN_OPTS        			:= -f $(HAL_FILELIST) $(HAL_BASE_OPTS)  -logfile $(HAL_LOG_FILE)
+
+
+#####################################################################
+# BUILD_RTL  Options and variables 
+#####################################################################
+export BUILD_RTL_DIR				:= $(CURR_DIR).build/
+export RTL_FILELIST         		:= $(BUILD_RTL_DIR)$(TOP_MODULE).f
+export XRUN_BASE_OPTS       		:= -elaborate -64bit -sv -v93 -uvm -disable_sem2009 +libext+.v+.sv+.vp+.vlib -enable_work_yvlib +define+NI_BEHAVIORAL +define+SIMULATION -timescale 1ns/1ps -top $(TOP_MODULE) $(RTL_EXTRA_BUILD_OPTS)
+
+#####################################################################
+### Targets
+#####################################################################
+.PHONY:	slint jcdc jcdc_gui hal help build_rtl slint_gui prepro
+
+# Preprocess *.py* RTL: generate output in same dir with "py" removed from extension
+prepro: $(PREPRO_OUTPUTS)
+
+$(CURR_DIR)%.sv: $(CURR_DIR)%.pysv
+	@echo "Preprocessing $< -> $@"
+	cd $(dir $<) && $(VENV_ACTIVATE_SCRIPT) && $(PYTHON) $(PREPRO_SCRIPT) -o $(notdir $@) $(notdir $<)
+
+$(CURR_DIR)%.v: $(CURR_DIR)%.pyv
+	@echo "Preprocessing $< -> $@"
+	cd $(dir $<) && $(VENV_ACTIVATE_SCRIPT) && $(PYTHON) $(PREPRO_SCRIPT) -o $(notdir $@) $(notdir $<)
+
+$(CURR_DIR)%.svh: $(CURR_DIR)%.pysvh
+	@echo "Preprocessing $< -> $@"
+	cd $(dir $<) && $(VENV_ACTIVATE_SCRIPT) && $(PYTHON) $(PREPRO_SCRIPT) -o $(notdir $@) $(notdir $<)
+
+$(CURR_DIR)%.vh: $(CURR_DIR)%.pyvh
+	@echo "Preprocessing $< -> $@"
+	cd $(dir $<) && $(VENV_ACTIVATE_SCRIPT) && $(PYTHON) $(PREPRO_SCRIPT) -o $(notdir $@) $(notdir $<)
+
+####################### SUPERLINT ################################
+$(JASPER_RUN_DIR):
+	@echo "Working directory and logs under: $(JASPER_RUN_DIR) "
+	@mkdir -p $(JASPER_RUN_DIR)
+
+$(JASPER_FILELIST): $(DESIGN_CONFIG_FILE) build_regs $(PREPRO_OUTPUTS) $(JASPER_RUN_DIR)
+	@echo "Creating manifest $(JASPER_FILELIST) "
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -syn $(JASPER_FILELIST) -abs
+# @$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -sim $(JASPER_FILELIST) -abs
+
+slint: $(JASPER_FILELIST) | $(JASPER_RUN_DIR)
+	@echo "Running Jasper SuperLint"
+	cd $(JASPER_RUN_DIR); $(JASPER_BASE_PATH)jg $(SL_RUN_CMD_OPTS)
+
+slint_gui: 
+	echo "Running Jasper SuperLint - reloading database"
+	cd $(JASPER_RUN_DIR); $(JASPER_BASE_PATH)jg $(SL_RELOAD_CMD_OPTS)
+
+jcdc: $(JASPER_FILELIST) | $(JASPER_RUN_DIR)
+	@echo "Running Jasper CDC/RDC: "
+	cd $(JASPER_RUN_DIR); $(JASPER_BASE_PATH)jg -batch $(JCDC_RUN_CMD_OPTS)
+
+jcdc_gui: $(JASPER_FILELIST) | $(JASPER_RUN_DIR)
+	@echo "Running Jasper CDC/RDC (GUI MODE): "
+	cd $(JASPER_RUN_DIR); $(JASPER_BASE_PATH)jg $(JCDC_RUN_CMD_OPTS)
+
+
+####################### HAL ######################################
+$(HAL_RUN_DIR):
+	@echo "Working directory and logs under: $(HAL_RUN_DIR) "
+	@mkdir -p $(HAL_RUN_DIR)
+
+$(HAL_FILELIST): $(DESIGN_CONFIG_FILE) build_regs $(PREPRO_OUTPUTS) $(HAL_RUN_DIR)
+	echo "Create manifest $(HAL_FILELIST) "
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -sim $(HAL_FILELIST) -abs
+
+hal: $(HAL_RUN_DIR) $(HAL_FILELIST)
+	echo "Running HAL"
+	true -f hal.design_info && cp -f hal.design_info $(HAL_RUN_DIR)/.
+	cd $(HAL_RUN_DIR) ; hal $(HAL_RUN_OPTS)
+
+
+####################### BUILD_RTL ################################
+
+build_rtl: build_regs $(RTL_FILELIST) 
+	echo "Building RTL with top module: $(TOP_MODULE)"
+	@cd $(BUILD_RTL_DIR); xrun $(XRUN_BASE_OPTS) $(USER_BUILD_OPTS) -f $(RTL_FILELIST)
+
+# Target to build the manifest .f file for the testbench
+$(RTL_FILELIST): $(DESIGN_CONFIG_FILE) $(PREPRO_OUTPUTS) | $(BUILD_RTL_DIR)
+	@echo "IPNAME: $(IP_NAME)"
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -sim $(RTL_FILELIST) -abs
+
+$(BUILD_RTL_DIR): 
+	@echo "Making $(BUILD_RTL_DIR) for RTL BUILD " 
+	@mkdir -p $(BUILD_RTL_DIR)
+
+#  Target to build the registers for all modules involved
+build_regs:
+	@echo "build_regs IPNAME: $(IP_NAME)"
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -quiet -abs -regs - | xargs -i make -C {}
+
+
+####################### CLEAN AND INFO  ################################
+clean::
+	@$(ALCHEMY) -ws $(ROOT_DIR) -yaml $(DESIGN_CONFIG_FILE) -top $(TOP_MODULE) -quiet -abs -regs - | xargs -i make -C {} clean
+	@echo "Cleaning dir"
+	@rm -f $(PREPRO_OUTPUTS)
+	@rm -rf $(JASPER_RUN_DIR)
+	@rm -rf $(HAL_RUN_DIR)
+	@rm -rf xcelium.d
+	@rm -rf $(BUILD_RTL_DIR)
+
+help::
+	@echo ""
+	@echo "#####################################################################"
+	@echo "#    Help information for simulation makefile"
+	@echo "#"
+	@echo "#    Usage:"
+	@echo "#        make <target> <options>"
+	@echo "#"
+	@echo "#    Targets: "
+	@echo "#        prepro      - Preprocess *.py* RTL (e.g. .pysv -> .sv) using scripts/venv and prepro"
+	@echo "#        slint -     - Runs super-lint (Jasper SuperLint); Results in .jasper dir "
+	@echo "#        slint_gui   - Launch Jasper GUI and reload database"
+	@echo "#        hal         - Runs HAL-lint; Results in .hal dir "
+	@echo "#        build_rtl   - Run xrun on TOP_MODULE (default to IP_NAME) elab only "
+	@echo "#"
+	@echo "#    Options: "
+	@echo "#        slint:   	No options available for Jasper launching at thie time"
+	@echo "#        hal:    	No options available for HAL launching at thie time"
+	@echo "#        build_rtl: 	TOP_MODULE=submod_name to run only this level of XRUN elab "
+	@echo "#"
+	@echo "#"
+

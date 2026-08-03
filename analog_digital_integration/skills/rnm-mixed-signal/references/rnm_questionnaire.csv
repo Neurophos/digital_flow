@@ -1,0 +1,60 @@
+SECTION,ID,QUESTION,TYPE,OPTIONS / FORMAT,ANSWER,NOTES / IMPACT ON FLOW
+,,,,,,
+HEADER,,,,,Block: msic_a0 / pixel_hh,
+HEADER,,,,,Designer (owner):,
+HEADER,,,,,Date:,
+HEADER,,,,,Corner / process node:,
+HEADER,,,,,Reviewed by (RNM engineer):,
+,,,,,,
+SECTION A — OPERATING CONDITIONS,,,,,,"Gates OP sweep ranges for TB1-TB3. All fields required before any simulation is run."
+A,A1,What is the minimum column input voltage?,real [V],,,"Sets lower bound of SF transfer curve sweep (TB1). If < 0V, check body effect (flag to B2)."
+A,A2,What is the nominal column input voltage?,real [V],,,"Center of TB1 sweep and default DC bias for TB3 OP extraction."
+A,A3,What is the maximum column input voltage?,real [V],,,"Sets upper bound of TB1 sweep. If > vddc − |VSF_OFF|, SF may clip — flag to B2."
+A,A4,What is the nominal vgcsp bias voltage?,real [V],,,"Critical: directly seeds VSF_OFF extraction in TB3. Must match intended operating point."
+A,A5,What is the nominal vgcsn bias voltage?,real [V],,,"Tail current source bias. Affects ROUT and gain_SF extraction."
+A,A6,What is the pixel supply voltage vddc?,real [V],,,"Sets upper rail for TB1-TB3 sweeps and switch RON calculation."
+A,A7,What is the row supply voltage vddr?,real [V],,,"Sets switch vgs and affects RON. Used in TB2 settling sweep."
+A,A8,What is the minimum operating temperature?,real [°C],,,"If != 27°C, add temperature corners to TB3. Enables dVSF_OFF/dT extraction."
+A,A9,What is the maximum operating temperature?,real [°C],,,"Upper bound for temperature sweep in TB3. Determines if thermal coefficient is needed."
+A,A10,What is the nominal ph_smp pulse width (track window)?,real [ns],,,"Required to set TB2 transient duration. If 5τ > ph_smp width, flag settling issue."
+,,,,,,
+SECTION B — FUNCTIONAL INTENT,,,,,,"Gates which equations to extract and at what model order. Complete after Section A."
+B,B1,Is the source follower intended to be a unity-gain buffer or is there a designed-in gain < 1?,choice,"Unity gain (gain ≈ 1) | Intentional gain < 1 | Unknown — extract from simulation",,"""Intentional gain < 1"" → add gain term to equation table. ""Unknown"" → TB1 curve fit decides."
+B,B2,Does VSF_OFF vary significantly across the column input range?,choice,"Stable across range (linear model sufficient) | Varies — specify threshold voltage | Unknown — let curve fit decide",,"""Varies"" → quadratic or piecewise fit in Phase 4. ""Unknown"" → auto-escalate if linear residual > D2 budget."
+B,B2a,"If VSF_OFF varies, at what column voltage does the nonlinearity become significant?",real [V] or N/A,,,"Used to set piecewise breakpoint in Phase 4 Python fit."
+B,B3,How should charge injection from the sampling switch be treated?,choice,"Absorb into a constant VSF_OFF offset | Model explicitly (varies with V(column)) | Negligible",,"""Explicitly"" → TB2 must sweep column value at switch-off edge and fit ΔV_charge_injection(col)."
+B,B4,Is hold-mode droop (leakage off sample node) significant within the readout window?,choice,"Negligible for readout timing | Significant — must be modeled",,"""Significant"" → add droop_rate [mV/µs] parameter to equation table. Extracted from TB2 long hold."
+B,B4a,"If droop is significant, what is the maximum allowed hold time before readout?",real [ns] or N/A,,,"Sets TB2 transient length for droop extraction."
+B,B4b,"If droop is significant, what is the droop specification?",real [mV/µs] or N/A,,,"Validation threshold in Phase 6 overlay check."
+B,B5,Is the diagnostic path (diag_en → diag_bus) a critical accuracy path or test-only?,choice,"Test-only (1% error acceptable) | Critical — same accuracy as vpix",,"""Critical"" → Phase 4 must also extract diag path gain and offset. Adds TB5 testbench."
+B,B6,Are the left and right pixel halves (vapix vs. vbpix) expected to match within spec?,choice,"Matched by design | Known offset between halves — specify | Not characterized",,"""Known offset"" → must be parameterized separately in RNM. Adds left/right gain mismatch term."
+B,B6a,"If offset exists, what is the expected left-right mismatch?",real [mV] or N/A,,,"Added as parameter real MISMATCH_LR in RNM code."
+,,,,,,
+SECTION C — RESISTORS,,,,,,"Resistors are actual impedance elements — not ideal shorts. All rmzw devices in pixel_hh require characterization."
+C,C1,What is the sheet resistance (Rsheet) for the rmzw layer in this process node?,real [Ω/sq] or run TB4,,,"If known from PDK: R = Rsheet × (L/W). If unknown: TB4 DC extraction required."
+C,C2,Is the column daisy-chain RC ladder (111 pixels × R_Rdaca in series) a design constraint?,choice,"No — R×C << readout time (ideal short acceptable in RNM) | Yes — cumulative RC = specify [ns] | Unknown — flag for analysis",,"""Yes"" or ""Unknown"" → TB4 must also measure RC settling on a multi-pixel chain."
+C,C2a,"If RC ladder is a constraint, what is the acceptable total column delay?",real [ns] or N/A,,,"Compared against extracted cumulative RC in Phase 4."
+C,C3,Are column_out / vcm_out / gndc_out / vddc_out loaded (do they drive measurable current)?,choice,"Unloaded — IR drop < 1 mV (ideal short acceptable) | Loaded — specify expected load current | Unknown",,"""Loaded"" → finite R must appear in RNM. Drives routing resistor model from TB4. IR drop = I_load × R_PDK."
+C,C3a,"If loaded, what is the expected load current at column_out?",real [µA] or N/A,,,"Used to compute expected IR drop for validation check in Phase 6."
+C,C3b,"If loaded, what is the expected load current at vcm_out?",real [µA] or N/A,,,
+C,C3c,"If loaded, what is the expected load current at gndc_out?",real [µA] or N/A,,,
+C,C3d,"If loaded, what is the expected load current at vddc_out?",real [µA] or N/A,,,
+,,,,,,
+SECTION D — VALIDATION REFERENCE,,,,,,"Defines the acceptance criteria for Phase 6 and enables automated error checking."
+D,D1,Is a reference Spectre transient waveform (column ramp → vpix) already available?,choice,"Yes — provide path | No — generate new (proceed to Phase 3)",,"""Yes"" → Phase 6 overlay uses this as golden. Path must be accessible to the RNM engineer."
+D,D1a,"If reference waveform is available, provide the file path or simulation directory.",text or N/A,,,
+D,D2,What is the acceptable RNM model error vs. Spectre golden?,real [mV] at 3σ,,,"Sets the auto-pass/fail threshold in Phase 6 validation overlay. Drives model order escalation."
+D,D3,Which PVT corners are mandatory for model validation?,multi-choice,"TT/27°C only (fast) | TT + temperature extremes | Full: FF/SS/FS/SF × -40/27/125°C | Custom — specify",,"""Full"" → Phase 3 TB3 must sweep all PVT combinations. Multiplies simulation time."
+D,D3a,List any custom corners required (if D3 = Custom).,text or N/A,,,
+D,D4,"Are there any known nonlinearities, anomalies, or operating range restrictions the linear model would miss?",text,,,"Open field. Examples: body effect at low column, DIBL at high Vds, output impedance variation at rail."
+D,D5,"Are there any known startup, power-on, or reset sequences that must be represented in the RNM?",choice,"No — steady-state model sufficient | Yes — describe",,"""Yes"" → RNM needs initial block and state initialization logic. Adds complexity to Verilog-AMS model."
+D,D5a,Describe startup / reset sequence if applicable.,text or N/A,,,
+,,,,,,
+SECTION E — SIGN-OFF,,,,,,"Completed after Phase 5 (designer equation review). Documents final approval."
+E,E1,Have all extracted parameters been reviewed and validated?,choice,"Yes — proceed to Phase 6 RNM coding | No — flag items for re-simulation (list below)",,
+E,E2,List any parameters requiring re-simulation or model revision.,text or N/A,,,
+E,E3,Designer signature (block owner).,text,,,
+E,E4,RNM engineer signature.,text,,,
+E,E5,Sign-off date.,date [YYYY-MM-DD],,,
+E,E6,Approved error budget (confirm or revise from D2).,real [mV] at 3σ,,,"Final committed threshold for Phase 6 validation. Cannot be changed after sign-off."
+E,E7,Any parameters accepted with deviation or relaxed spec? List and justify.,text or N/A,,,"Deviations are documented here for traceability. E.g. ""charge injection absorbed, validated by simulation XYZ""."

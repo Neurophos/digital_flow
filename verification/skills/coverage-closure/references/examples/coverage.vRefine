@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  MSIC UVM Coverage Exclusions — Cadence IMC 25.09 vRefine format
+  Generated: 2026-06-30
+
+  UCIS path root is 'msic_top' because xrun is invoked with -covdut msic_top.
+  All entityName values use slash-separated UCIS paths: msic_top/<inst>/<signal>
+
+  Exclusion categories:
+    comment="1"  DFT:    hardwired-to-0 scan/DFT signals (digital_top.sv lines 814-817)
+    comment="2"  JTAG:   JTAG outputs to pad ring, constant 0 (lines 153-155)
+    comment="3"  PAD:    pad-ring control signals, hardwired constants (lines 222-262)
+    comment="4"  UNUSED: unused/removed module ports tied to constants (lines 834-836)
+    comment="5"  CHIP:   chip-level outputs to analog domain, constant 0 (lines 151-152)
+    comment="6"  TIMER:  timer external inputs, not connected in UVM TB (lines 216-217)
+    user="7"     robson
+    reviewer="8" unknown
+-->
+<refinement-file-root>
+  <information comment-version="2" creation-time="Mon 30 Jun 2026 19:00:00 CST" creator="robson" csCheck="false" save-ref-method="seq" tool-version="Cadence Verisium Manager25.09" rules-signature-c="0">
+    <ucm-files></ucm-files>
+    <ccf-files></ccf-files>
+  </information>
+  <rules>
+
+    <!-- ============================================================ -->
+    <!-- DFT signals: hardwired to 0 in digital_top (never toggle)   -->
+    <!-- digital_top.sv lines 814-817                                 -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="1" domain="icc" entityName="msic_top/u_digital_top/scan_en"       entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="1" domain="icc" entityName="msic_top/u_digital_top/arm_cgbypass"  entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="1" domain="icc" entityName="msic_top/u_digital_top/arm_rstbypass" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="1" domain="icc" entityName="msic_top/u_digital_top/dft_rst_disable" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- JTAG: outputs to pad ring, hardwired to 0                    -->
+    <!-- digital_top.sv lines 153-155                                 -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="2" domain="icc" entityName="msic_top/u_digital_top/jtck_core2pad" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="2" domain="icc" entityName="msic_top/u_digital_top/jtms_core2pad" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="2" domain="icc" entityName="msic_top/u_digital_top/jtdi_core2pad" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- Pad control: JTAG pad configuration, hardwired constants     -->
+    <!-- digital_top.sv lines 234-262                                 -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtck_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtck_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtck_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtck_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtck_oe_n" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtms_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtms_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtms_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtms_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtms_oe_n" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdi_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdi_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdi_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdi_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdi_oe_n" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdo_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdo_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdo_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtdo_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <!-- jtdo_oe_n is NOT a constant: driven by arm_tdoen_n (JTAG TDO output enable from ARM) -->
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtrstn_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtrstn_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtrstn_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtrstn_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/jtrstn_oe_n" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- Pad control: reset_n and chip_clk pad config, constants      -->
+    <!-- digital_top.sv lines 222-232                                 -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/reset_n_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/reset_n_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/reset_n_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/reset_n_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/reset_n_oe_n" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/chip_clk_pu"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/chip_clk_pd"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/chip_clk_ds"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/chip_clk_ie"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="3" domain="icc" entityName="msic_top/u_digital_top/chip_clk_oe_n" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- Chip outputs to analog domain: hardwired to 0                -->
+    <!-- digital_top.sv lines 151-152                                 -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="5" domain="icc" entityName="msic_top/u_digital_top/chip_clk_core2pad"  entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="5" domain="icc" entityName="msic_top/u_digital_top/reset_n_core2pad"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- Timer external inputs: not wired to any pin in UVM TB        -->
+    <!-- digital_top.sv lines 216-217  (FIXME note in RTL)            -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="6" domain="icc" entityName="msic_top/u_digital_top/timer0_extin" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="6" domain="icc" entityName="msic_top/u_digital_top/timer1_extin" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- c2c_comm APB port: removed module, permanently tied off      -->
+    <!-- digital_top.sv lines 834-836                                 -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="4" domain="icc" entityName="msic_top/u_digital_top/c2c_comm_apb_if/pready"   entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="4" domain="icc" entityName="msic_top/u_digital_top/c2c_comm_apb_if/ptrgterr" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+
+
+    <!-- ============================================================ -->
+    <!-- DAC ctrl analog test: analog_out_enable drives tst_en to     -->
+    <!-- NI_BEHAVIORAL analog test pads; skipped in dac_ctrl_reg_test  -->
+    <!-- dac_ctrl_reg_coverage_vseq ANATEST_SAFE_MASK = 0x000000FF    -->
+    <!-- dac_ctrl.sv: tst_en drives ana_tst1/2/spare/cm_drv pads      -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="10" domain="icc" entityName="msic_top/u_digital_top/u_dac_ctrl/u_dac_ctrl_reg_top/anatest_sel_analog_out_enable_qs" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+
+    <!-- ============================================================ -->
+    <!-- GPIO altfunc pad-control INPUTS: driven by constant tie-offs -->
+    <!-- in digital_top (per the pinout spreadsheet), so these input  -->
+    <!-- ports of u_gpio can never toggle.  All 123 bits of each are   -->
+    <!-- literal 1'b0/1'b1 (digital_top.sv altfunc_pad_* assigns).     -->
+    <!-- NOT excluded: altfunc_pad_oe_n (9/123 real: uart_tx_oe/qspi)  -->
+    <!-- and altfunc_core2pad (47/123 real: uart_tx/fabio data).       -->
+    <!-- ============================================================ -->
+    <rule ccType="inst" comment="11" domain="icc" entityName="msic_top/u_digital_top/u_gpio/altfunc_pad_pu" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="11" domain="icc" entityName="msic_top/u_digital_top/u_gpio/altfunc_pad_pd" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="11" domain="icc" entityName="msic_top/u_digital_top/u_gpio/altfunc_pad_ds" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+    <rule ccType="inst" comment="11" domain="icc" entityName="msic_top/u_digital_top/u_gpio/altfunc_pad_ie" entityType="toggle" excTime="1751385600" name="exclude" reviewer="8" user="7" vscope="default"></rule>
+  </rules>
+  <cache-map>
+    <cache-entry key="1" value="DFT: hardwired to 0 — scan/DFT signals not exercised in UVM simulation"></cache-entry>
+    <cache-entry key="2" value="JTAG: output to pad ring hardwired to 0 — JTAG not wired in pre-silicon UVM testbench"></cache-entry>
+    <cache-entry key="3" value="Pad control: configuration constant set at design time, never changes in simulation"></cache-entry>
+    <cache-entry key="4" value="Unused/removed module: c2c_comm port removed, signals permanently tied off in digital_top.sv"></cache-entry>
+    <cache-entry key="5" value="Chip output to analog domain: hardwired to 0, analog not simulated in UVM"></cache-entry>
+    <cache-entry key="6" value="Timer external input: not connected to any pin in UVM testbench (FIXME note in RTL)"></cache-entry>
+    <cache-entry key="7" value="robson"></cache-entry>
+    <cache-entry key="8" value="unknown"></cache-entry>
+    <cache-entry key="10" value="DAC ctrl analog test path: analog_out_enable drives tst_en to NI_BEHAVIORAL analog test pads; excluded from dac_ctrl_reg_test (ANATEST_SAFE_MASK=0xFF)"></cache-entry>
+    <cache-entry key="11" value="GPIO altfunc pad-control input tie-offs: altfunc_pad_pu/pd/ds/ie[122:0] driven by constant 1'b0/1'b1 in digital_top per the pinout, so these u_gpio input ports can never toggle (dead by construction)"></cache-entry>
+  </cache-map>
+</refinement-file-root>

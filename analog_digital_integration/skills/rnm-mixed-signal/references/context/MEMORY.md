@@ -1,0 +1,4 @@
+- [anatop RNM project](anatop-rnm-project.md) — full-chip EEnet real-number model of msic_a0/anatop; wreal & home-grown ee_net are legacy
+- [anatop RNM build & run](anatop-rnm-build-run.md) — Makefile targets, EE_pkg::EEnet driver idioms, key paths, session resume
+- [rnmgen2 transformer](rnmgen2-transformer.md) — how wire→EEnet propagation across the hierarchy works; netlister master-file language rule
+- [anatop config netlisting](anatop-config-netlisting.md) — runams flow (needs startPrj env); emits plain wire; netlist.vams + filelist
