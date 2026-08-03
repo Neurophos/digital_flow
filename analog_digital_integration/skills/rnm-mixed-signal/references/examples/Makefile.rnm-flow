@@ -1,0 +1,76 @@
+# ============================================================================
+#  msic anatop RNM -- reference real-number-modeling flow (Cadence EE_pkg::EEnet)
+#  Prereq:  module load cadence/xcelium/25.09.001
+#           (for 'make netlist' also: startPrj msic msic_a0)
+#  Run 'make help' for targets.
+# ============================================================================
+SHELL := /bin/bash
+XRUN  := xrun
+PY    := env -u LD_LIBRARY_PATH -u PYTHONHOME python3
+
+# --- Cadence native electrical discipline (tool-provided; referenced, NOT committed) ---
+DMS   := /tools/cadence/xcelium/25.09.001/tools/affirma_ams/etc/dms
+EE    := $(DMS)/EE_pkg.sv
+
+# --- analog OA library + cds workspace (runams reads functional views from OA) ---
+OA      := /projects/msic/msic_a0/analog/oa/msic_a0
+CDSWORK := /projects/msic/msic_a0/users/robson/wksp1/cds
+
+# --- repo sources (versioned) ---
+TOOL   := tools/rnmgen2.py
+ROLES  := src/roles/ee_roles.sv
+LEAVES := src/leaves/dac_dark.sv src/leaves/thermal.sv src/leaves/tst_intf.sv \
+          src/leaves/bias_array_vh.sv src/leaves/pixel_hh.sv src/leaves/row_drv.sv \
+          src/leaves/col_driver.sv
+TB     := tb/tb_anatop.sv
+TOP    := tb_anatop
+
+# --- committed, self-contained runams snapshot (input to rnmgen2; no cds workspace needed) ---
+NETLIST  := netlist/anatop_nl/netlist/netlist.vams
+# --- generated artifacts (gitignored) ---
+BUILD    := build
+GEN      := $(BUILD)/netlist_ee.sv
+ROLEBIND := $(BUILD)/netlist_ee_roles_bind.sv
+
+XFLAGS := -sv -timescale 1ns/1ps
+# compile order: EE_pkg -> role checkers -> leaves -> generated top -> role binds -> tb
+SRCS   := $(EE) $(ROLES) $(LEAVES) $(GEN) $(ROLEBIND) $(TB)
+
+.PHONY: help netlist rnm elab sim waves cov clean install-leaves
+
+help:                ## show targets
+	@echo "msic anatop RNM reference flow -- targets:"
+	@grep -E '^[a-z].*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*##/\t/' | sort | awk -F'\t' '{printf "  make %-14s %s\n",$$1,$$2}'
+	@echo ""
+	@echo "Prereq: module load cadence/xcelium/25.09.001   (+ startPrj msic msic_a0 for 'netlist')"
+	@echo "Flow:   make netlist -> make rnm -> make sim"
+
+netlist:             ## REGEN the committed netlist snapshot via runams  [needs startPrj env + OA]
+	mkdir -p netlist
+	cd $(CDSWORK) && runams -lib msic_a0 -cell anatop -view config -netlist all \
+	    -rundir $(abspath netlist/anatop_nl) -cdslib ./cds.lib
+
+rnm: $(GEN)          ## rnmgen2: type-infer + retype wire->EEnet + de-electrify + role-stamp
+$(GEN) $(ROLEBIND): $(NETLIST) $(TOOL) $(LEAVES)
+	mkdir -p $(BUILD)
+	$(PY) $(TOOL) $(NETLIST) $(GEN) $(LEAVES)
+
+elab: $(GEN) $(ROLEBIND)   ## elaborate the full chip (no run)
+	$(XRUN) $(XFLAGS) -elaborate $(SRCS) -top $(TOP)
+
+sim: $(GEN) $(ROLEBIND)    ## compile + run the tb with live role assertions
+	$(XRUN) $(XFLAGS) $(SRCS) -top $(TOP)
+
+waves: $(GEN) $(ROLEBIND)  ## sim + SHM waveform dump (view: simvision build/waves.shm)
+	$(XRUN) $(XFLAGS) -access +rwc +define+DUMP $(SRCS) -top $(TOP)
+
+cov: $(GEN) $(ROLEBIND)    ## sim with code+toggle+expr coverage (DB in build/cov_work/)
+	$(XRUN) $(XFLAGS) -coverage all -covoverwrite -covworkdir $(BUILD)/cov_work $(SRCS) -top $(TOP)
+
+install-leaves:      ## copy repo leaf models into the OA functional views (for runams)
+	@for c in dac_dark thermal tst_intf bias_array_vh pixel_hh row_drv; do \
+	  cp src/leaves/$$c.sv $(OA)/$$c/functional/verilog.sv && echo "installed $$c"; done
+	@echo "NOTE: each OA functional view's master.tag must already select 'verilog.sv'."
+
+clean:               ## remove build/sim artifacts
+	rm -rf $(BUILD) xcelium.d .simvision *.log *.history *.key *.diag .bpad
