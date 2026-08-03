@@ -1,78 +1,102 @@
 ---
 name: rnm-mixed-signal
-description: Derive and integrate Real-Number Models (RNM) of analog blocks for mixed-signal UVM simulation on Neurophos SoCs — Cadence EEnet discipline, rnmgen2 netlist type-inference, the 6-phase transistor→RNM derivation flow, netlist snapshotting, and leaf authoring from Virtuoso. Use when modeling AnaTop/analog for digital-speed AMS sim or refreshing the RNM netlist.
+description: Real-Number Models (RNM) of analog blocks for mixed-signal sim on Neurophos SoCs. Two flows — the PROVEN netlist-assembly flow (rnmgen2 + hand-authored EEnet leaves, make rnm/sim, runs today) and the PROSPECTIVE 6-phase Spectre-driven auto-derivation flow (rnm_flow.md, PoC on pixel_hh, still pending proof). Use when modeling AnaTop/analog, authoring a leaf, refreshing the netlist, or evaluating the auto-derivation flow.
 ---
 
 # RNM / Mixed-Signal Modeling (analog↔digital integration)
 
-## When to use
-Bringing an analog block (e.g. AnaTop metasurface array) into the digital UVM
-testbench as a fast Real-Number Model; refreshing the committed netlist snapshot
-after an analog design change; authoring or reviewing a leaf model; deciding
-whether a block is RNM-suitable.
+There are **two flows** in `verif/model`. Know which you're using.
 
 ## What RNM buys
-Simulate analog behavior at **digital speed** inside the UVM TB — no Spectre in
-the loop — using real-valued electrical nets instead of transistor-level. Lets
-DAC/driver/pixel datapaths be verified functionally against the digital side.
+Simulate analog behavior at **digital speed** (event-driven, no Spectre in the
+loop) using real-valued electrical nets (`EE_pkg::EEnet` — V/I/R with Kirchhoff
+resolution) instead of transistor-level. Discipline: Cadence native `EEnet`, not
+`wreal`/user nettypes; digital nets stay `logic`.
 
-## Discipline: Cadence native `EE_pkg::EEnet`
-Analog nets are modeled as `EEnet` (real-number electrical, native Cadence
-AMS-RNM), not `wreal`/user nettypes. Digital nets stay `logic`. The boundary is
-resolved automatically (see rnmgen2). Keep leaves in this discipline.
+---
 
-## rnmgen2 — automated netlist → full-RNM
-`verif/model/tools/rnmgen2.py <netlist.vams> <out.sv> <leaf1.sv> ...`
-- **Seeds** exact port types from hand-authored leaf `.sv` (EEnet vs logic).
-- **Fixpoint inference:** a net is `EEnet` iff it touches ≥1 EEnet port and 0
-  logic ports; `logic` iff only logic ports; `conflict` (reported, left logic) if
-  both. A module's port type = the type of its internal same-named net (propagates
-  up the hierarchy).
-- Retypes EEnet nets/ports, declares implicit EEnet nets, keeps logic/packed
-  buses, and **de-electrifies primitives** (a 2-terminal resistor → ideal short;
-  MOS/cap devices dropped) since the leaves carry the behavior.
+## Flow A — PROVEN (runs today): netlist assembly from hand-authored leaves
 
-## The 6-phase derivation flow (transistor-level → RNM)
-1. **Automated topology analysis** — classify devices (tech-independent rules),
-   select stimulus categories per sub-block (`pixel_hh` map).
-2. **Designer interrogation** — a questionnaire (`rnm_questionnaire.csv`) captures
-   intent the netlist can't express (modes, don't-cares, bias points).
-3. **Spectre stimuli generation** (semi-auto) — TB1 source-follower transfer
-   curve, TB2 track-and-hold settling, TB3 operating-point sweep, TB4 resistor
-   characterization.
-4. **Transfer-equation extraction** (semi-auto) — fit each TB's data (e.g. SF
-   transfer, settling τ→RON, VSF_OFF polynomial); escalate to higher-order fit if
-   residual > error budget.
-5. **Designer equation review** — human checkpoint on the extracted equation table.
-6. **RNM code-gen + validation overlay** — equation table → RNM parameter block;
-   overlay compares RNM vs reference within the error budget.
+The AnaTop full-chip RNM that `make rnm`/`make sim` build and pass today. Leaf
+behavioral models are **hand-authored** (source of truth); `rnmgen2` assembles
+them into a typed netlist.
 
-## Netlist snapshot (extraction from OA)
-The committed `.vams` netlist is a snapshot of the live OpenAccess design. Refresh
-it only deliberately (analog changed): re-export from OA, then re-run rnmgen2 to
-regenerate the RNM `.sv`. Keep the snapshot + generated model committed so digital
-sim is reproducible without OA access. Layout under `verif/model/netlist/`.
+```
+runams (structural OA netlist)
+   -> rnmgen2.py (type-infer wire->EEnet, de-electrify R->short,
+                  substitute behavioral leaves, stamp net roles)
+   -> xrun (pure RNM, event-driven, live role assertions -> ALL PASS)
+```
+- **rnmgen2** (`verif/model/tools/rnmgen2.py`): seeds exact port types from the
+  hand-authored leaf `.sv`; fixpoint-infers each net (`EEnet` iff it touches ≥1
+  EEnet port and 0 logic ports; `conflict` reported, left logic); retypes the
+  hierarchy; **de-electrifies primitives** (2-terminal R → ideal short, MOS/cap
+  dropped — the leaves carry behavior); stamps VDD/GND/bias **roles** into bound
+  checkers.
+- **Leaves** (`src/leaves/*.sv`) authored/edited from Virtuoso via the F9/F10
+  bindkey (`tools/bindkeys/{rnm_editor.py,RMgenRnm.il}`). **Roles**
+  (`src/roles/ee_roles.sv`): `chk_vdd/gnd/bias/diff` assertions catch mis-wired
+  power/bias.
+- **Self-contained** via the committed netlist snapshot
+  (`verif/model/netlist/…/netlist.vams`): `make rnm` + `make sim` need no OA
+  workspace. `make netlist` only *refreshes* the snapshot from live OA (needs
+  `startPrj`).
+- This is also the environment described in the `uvm-system-level` skill (§B).
 
-## Leaf authoring from Virtuoso
-Author/refresh leaf models directly from schematic via the F9/F10 bindkey
-(`verif/model/tools/bindkeys/rnm_editor.py`, `RMgenRnm.il`). Leaves live in
-`verif/model/src/leaves/`; roles in `src/roles/`.
+**Status: proven — this is the working flow. Use it now.**
 
-## Applicability (flag before investing sim time)
-- **Runs as-is:** SF/T&H/bias-driven datapaths (pixel/driver/DAC-facing) with
-  well-separated device roles.
-- **Requires modification:** feedback/oscillatory or strongly-coupled blocks.
-- **Not suitable:** RF/continuous-time blocks whose behavior can't be reduced to a
-  transfer table within budget — flag early.
+---
 
-## Key principle
-The RNM must be **conservative and validated against reference**, not a guess: the
-extraction → review → overlay loop exists so the model's error is bounded and
-signed off, not assumed.
+## Flow B — PROSPECTIVE (pending proof): 6-phase auto-derivation from Spectre
+
+Documented in `verif/model/doc/rnm_flow.md`. Goal: instead of hand-authoring leaf
+equations, **automatically derive** them from transistor-level Spectre, closing
+the loop. **Proof-of-concept block: `pixel_hh`** (S/H + source-follower).
+Principle: *Spectre is the golden reference and extraction engine — no transistors
+are replaced; they run as-is and produce the equations the RNM implements.*
+
+```
+Phase 1  Topology analysis (automated)          -> topology_map.txt
+Phase 2  Designer questionnaire (checkpoint 1)  -> questionnaire.md
+Phase 3  Spectre stimuli gen (semi-auto)        -> tb1_sf.vams … tb4_res.sps
+Phase 4  Transfer-equation extraction (semi)    -> equation_table.txt (+ pixel_hh_extract.py)
+Phase 5  Designer equation review (checkpoint 2)-> review_session.md   [loop back to 3/4 if fail]
+Phase 6  RNM code-gen + validation overlay      -> verilog.sv (OA view) + validation_overlay.png/csv
+```
+Key principles (rnm_flow.md): one equation per testbench (no parameter
+correlation); resistors characterized from the PDK (TB4), **not** idealized;
+two human checkpoints (2 before sim, 5 before code); **fail-fast** — Phases 1–2
+decide suitability before any Spectre budget is spent.
+
+### Applicability (decide in Phase 1–2, before sim investment)
+- **Runs as-is:** sampling/S-H, continuous-time buffer (SF/CS), reference/bias,
+  level shifter, switch/mux.
+- **Requires modification:** strongly nonlinear (escalate fit order / piecewise),
+  feedback-dependent output impedance (characterize with real load), multi-cycle
+  state (add state vars), oscillator (model freq-vs-control, not V-transfer).
+- **Not suitable (flag early):** PLL/DLL closed-loop, strongly-distributed RC,
+  mixed-domain (optical/thermal/RF — outside EEnet V/I scope).
+
+**Status: PROSPECTIVE / NOT YET PROVEN.** The phase artifacts above are the
+intended end-state, demonstrated only as a PoC on `pixel_hh`; the flow is not yet
+proven end-to-end or generalized across AnaTop blocks. Today, leaves for Flow A
+are still hand-authored. Before relying on Flow B: reproduce the `pixel_hh` PoC,
+validate the overlay error against Spectre per corner, and confirm the extraction
+scripts (`pixel_hh_extract.py` and the auto-TB generation) exist and run — much of
+Phases 3–4 is described as "semi-automated" and may need the manual pieces filled.
+
+---
+
+## Relationship
+Flow B *feeds* Flow A: a proven Phase-6 model becomes a hand-off-quality leaf that
+`rnmgen2` (Flow A) assembles into the full-chip RNM. Until Flow B is proven, new
+leaves are authored by hand (Virtuoso bindkey) and validated ad hoc.
 
 ## Sources (MSIC)
-`verif/model/README.md`, `verif/model/doc/rnm_flow.md`,
+Flow A: `verif/model/{README.md,Makefile}`, `verif/model/tools/rnmgen2.py`,
+`tools/bindkeys/{rnm_editor.py,RMgenRnm.il}`, `src/{leaves,roles}/`,
+`netlist/`, `doc/EEnet_README.md`.
+Flow B (prospective): `verif/model/doc/rnm_flow.md`,
+`verif/model/doc/rnm_questionnaire.csv`,
 `verif/model/doc/context/{anatop-rnm-build-run,anatop-rnm-project,rnmgen2-transformer}.md`,
-`verif/model/tools/rnmgen2.py`, `tools/bindkeys/{rnm_editor.py,RMgenRnm.il}`,
-`verif/model/src/{leaves,roles}/`, `verif/model/netlist/`,
-`doc/rnm_flow.md`, `verif/uvm/rnm_flow.md`.
+`verif/model/doc/{virtuoso_setup,virtuoso_bindkeys}.md`.
