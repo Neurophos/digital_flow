@@ -53,12 +53,29 @@ against the code as the flow evolves.
 
 ### Make skills invokable in a consuming project
 
-Claude Code discovers skills under `.claude/skills/`. Symlink them (single source
-of truth):
+Claude Code discovers skills under `.claude/skills/`. Symlink each skill dir
+(single source of truth — edits live in this submodule):
 
 ```bash
-for d in digital_flow/*/skills/*; do ln -s "../../$d" ".claude/skills/$(basename "$d")"; done
+mkdir -p .claude/skills
+for d in digital_flow/*/skills/*/; do
+  ln -sfn "../../${d%/}" ".claude/skills/$(basename "$d")"
+done
 ```
+
+**Operational notes:**
+- **Discovery happens at Claude Code session start.** Newly-added/symlinked skills
+  become invokable in the **next** session, not retroactively in the one where you
+  wired them.
+- **The symlinks point into this submodule**, so after a fresh clone of the parent
+  repo they only resolve once the submodule is checked out:
+  ```bash
+  git submodule update --init digital_flow
+  ```
+  Until then the links dangle harmlessly. Re-run `git submodule update --remote
+  digital_flow` to pull newer methodology, and commit the bumped pointer.
+- Keep the symlinks committed in the parent repo so the whole team gets the same
+  invocation wiring; local-only settings (`.claude/settings.local.json`) stay out.
 
 ## Conventions
 
