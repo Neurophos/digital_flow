@@ -52,6 +52,12 @@ functional emulation build (e.g. a `nexys_video` carrier), swap the part/XDC and
 - Xcelium (not Vivado) is used for RTL simulation here — see the `verification` skills; Vivado is for
   synth/impl/bitstream only.
 
+## Bundled reference
+- `references/make_ballmap.py` — a worked deterministic ball-map generator (Spartan-7 FGGA676):
+  reads the vendor package-pins CSV, assigns `clk`→MRCC + user I/O→sorted GP balls (source-sync group
+  clustered into the clock bank, QSPI/config balls reserved), emits `ball,port,net`. Adapt the port
+  order + net names to your top; the structure (deterministic, additive, XDC+PCB from one CSV) carries.
+
 ## Sources
 Spartan-7 `XC7S100-2FGGA676I` dispatcher + DAC FPGAs; `make_dispatcher_ballmap.py`-style deterministic
 ball assignment feeding both the XDC and the KiCad board generator; Vivado 2025.1 build; nexys_video

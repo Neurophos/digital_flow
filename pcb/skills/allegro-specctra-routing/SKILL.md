@@ -88,6 +88,13 @@ signal layers *before* routing — see `kicad-pcb-flow`. If a via can't fit betw
 0.4 mm-pitch BGA/FFC) **no** autorouter can place the breakout there; that fan needs a
 deterministic/interactive router.
 
+## Bundled scripts
+- `scripts/specctra_route.sh -i board.dsn -o board.ses [-d "route 25;route 50 16"]` — the whole
+  verified run in one command (module + `LM_LICENSE_FILE` + `-product` + pinned Xvfb, detached, writes
+  the do-file, prints how to poll for the `.ses` / read the live GUI count). Env overrides:
+  `SPECCTRA_MODULE`, `SPECCTRA_PRODUCT`, `SPECCTRA_DISPLAY`, `SPB_BIN`.
+- DSN export / SES import: `../kicad-pcb-flow/scripts/export_dsn.py` and `import_ses.py`.
+
 ## Sources
 Distilled from a full head-to-head on a dense 6×AD5380-LQFP + Spartan-7 FGGA676 board:
 FreeRouting (1.9.0/2.2.4) collapsed (~650 failed, rising); SPECCTRA closed the 8-layer + 0.1/0.1/0.4

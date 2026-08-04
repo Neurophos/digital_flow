@@ -80,6 +80,15 @@ kicad-cli sch export netlist --format kicadsexpr        # (no DSN export here �
 - **Never `pkill -f <tool>` from a script that names the tool** — `-f` matches the running shell's
   own command line → self-kill (exit 144). Kill background jobs by PID.
 
+## Bundled scripts
+Run all three with the sandbox Python: `flatpak run --command=python3 org.kicad.KiCad <script> ...`.
+- `scripts/export_dsn.py board.kicad_pcb board.dsn [width_um clearance_um]` — Specctra DSN export
+  (+ optional width/clearance patch) for the autorouter (`allegro-specctra-routing`).
+- `scripts/import_ses.py board.kicad_pcb board.ses out.kicad_pcb` — import the routed session back;
+  reports track/via counts.
+- `scripts/set_fine_drc.py board.kicad_pcb [track clear via drill]` — set fine DRC (default
+  0.10/0.10/0.40/0.20 mm) on all net classes + board minimums (keep power nets wide separately).
+
 ## Sources
 KiCad 10 (flatpak) headless flow; generator-authored DAC/backplane schematics with deterministic
 UUIDs; pcbnew stackup/DRC scripting; Specctra DSN/SES round-trip into `allegro-specctra-routing`.
