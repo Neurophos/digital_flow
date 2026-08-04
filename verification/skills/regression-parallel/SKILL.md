@@ -9,12 +9,28 @@ description: Run the Neurophos UVM regression — serial (run_regression.sh) and
 Running the full suite (or a subset) before/after a change; producing a merged
 coverage database; validating a shared TB/RTL change didn't regress.
 
+## Prerequisite on a fresh workspace: generate the register RTL
+`design/<blk>/regs/rtl/` is **gitignored**, so a new clone has no generated
+register RTL and every test fails instantly at compile as `FAIL (no log)` with
+`*SE,FILEMIS: ... <blk>_reg_pkg.sv`. Nothing generates it on demand. Do this once
+first (details + why in `registers-regtool`):
+```bash
+for d in $(utils/chip_utils/scripts/alchemy -ws $(pwd) \
+             -yaml design/msic_top/config/msic_top.yaml -quiet -regs -); do
+    make -C "$d" all
+done
+```
+If a whole run fails uniformly, check for `FILEMIS` in `regr_results/*.log`
+**before** suspecting the RTL change under test — a uniform failure is almost
+always the environment, not a regression.
+
 ## Flow
 From `verif/uvm/`:
 ```bash
 ./run_regression.sh                       # serial, all tests
-./run_regression_parallel.sh COV=1        # 5 workers + coverage (collect + merge)
+./run_regression_parallel.sh COV=1        # 7 workers + coverage (collect + merge)
 ./run_regression_parallel.sh JOBS=6 COV=1 SUBSET="msic_smoke_test fabio_cr_test"
+./run_regression_parallel.sh MAX_LIC=5    # leave headroom when sharing the server
 ```
 Parallel runner: each worker gets an isolated `scratch_parN/` (own worklib, own
 elaboration snapshot — no worklib race), `MAX_LIC` caps concurrent licenses.
@@ -31,17 +47,25 @@ DB at `scratch/cov_work/scope/merged`. On completion:
 
 ## Gotchas
 - **License reality:** 7 `Xcelium_Single_Core`, **no** `Xcelium_Multi_Core` — MCE
-  / design-partitioning is unavailable; keep parallelism ≤ ~5 (`MAX_LIC`). IMC
-  merge also needs a Single_Core license (transient `LICERR` during the busy
-  window → re-run `make cov_merge`).
+  / design-partitioning is unavailable. The runner now defaults to
+  `JOBS=MAX_LIC=7`, i.e. the entire pool with **no headroom**; pass `MAX_LIC=5`
+  when sharing the server. Check first with
+  `lmstat -a -c $CDS_LIC_FILE | grep Xcelium_Single_Core`. A `gh-runner` CI box on
+  `cs1` routinely holds a seat. IMC merge also needs a Single_Core license
+  (transient `LICERR` during the busy window → re-run `make cov_merge`).
+- **The worker cap is computed once, at launch** —
+  `min(JOBS, MAX_LIC, currently_free)`. So `JOBS=7` with one seat taken prints
+  `Capping workers: requested 7 -> using 6` and proceeds at 6; but a co-tenant who
+  releases and re-requests mid-run then queues behind us. Max throughput and being
+  a good neighbour are genuinely in tension here — choose deliberately.
 - **`evaluate_log` pass criterion:** PASS = `grep "TEST PASSED"` (UVM banner) +
   `UVM_ERROR: 0`. It does **not** require the firmware's own `** TEST PASSED **`
   banner — a firmware test can print `TEST FAILED` and still be scored PASS. When
   validating firmware, check the UART `err_cnt`/banner too.
 - A shared TB/RTL change → run the **full** regression (a change to the tb_ctrl
   handler or a generated top-level `.sv` touches every test).
-- Wall-clock ≈ 70 min for the full suite at 5 workers; a single slow test (DAC-SRAM
-  read) is the long pole.
+- Wall-clock ≈ 70 min for the full suite (99 tests) at 5–6 workers; a single slow
+  test (DAC-SRAM read) is the long pole, so more workers help less than linearly.
 
 ## Bundled here (self-contained — no external workspace paths)
 

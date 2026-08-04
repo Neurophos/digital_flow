@@ -30,13 +30,17 @@ import error.
   export MDV_XLM_HOME=/tools/cadence/xcelium/25.09.001
   ```
   else `*E,coverage_engine_lib.not_found_env`.
-- **Internal tool installs** — the large Neurophos toolchains are installed on
-  disk and pinned by version, like the EDA tools (referenced, not bundled). Point
-  at them via versioned env vars, **TBD**:
-  ```bash
-  export REGTOOLS_HOME=/tools/neurophos/regtools/<version>        # reggen/topgen (registers-regtool)
-  export IPXACT2HJSON_HOME=/tools/neurophos/ipxact2hjson/<version>
+- **Internal tools need NO env setup** — unlike the EDA tools, the Neurophos
+  toolchains are committed to this repo and resolved from `ROOT_DIR` by the
+  Makefiles. Nothing to export, nothing to `module load`:
   ```
+  utils/chip_utils/scripts/regtools/regtool.py   # reggen/topgen (registers-regtool)
+  utils/chip_utils/scripts/ipxact2hjson/         # IPXACT -> hjson
+  utils/chip_utils/scripts/alchemy               # filelist generator (rtl-build-prepro)
+  utils/chip_utils/scripts/prepro                # .pysv -> .sv
+  ```
+  (`REGTOOLS_HOME` / `IPXACT2HJSON_HOME` appeared in earlier revisions of this
+  skill and in `registers-regtool`; no such env vars exist and nothing sets them.)
 - **Workspace / chip** — `ROOT_DIR := $(git rev-parse --show-toplevel)/` anchors
   every Makefile; `scripts/which_chip.pl` resolves the active chip from `ROOT_DIR`;
   `scripts/Makefile.ws` sets workspace paths.
