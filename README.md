@@ -11,14 +11,15 @@ git submodule update --remote digital_flow
 
 ## Organization
 
-Four flow areas, each holding its scripts/docs plus a `skills/` subdir:
+Five flow areas, each holding its scripts/docs plus a `skills/` subdir:
 
 | Area | Scope |
 |---|---|
 | `design/` | RTL build & prepro, register generation, lint, CDC |
 | `verification/` | Xcelium sim, UVM, regression, coverage closure, firmware, debug |
-| `implementation/` | synthesis (Genus), LEC, physical verification |
+| `implementation/` | synthesis (Genus), LEC, physical verification, **Xilinx FPGA build** |
 | `analog_digital_integration/` | RNM / mixed-signal modeling, analog↔digital handoff |
+| `pcb/` | board-level: KiCad schematic/layout headless flow, Cadence SPECCTRA autorouting |
 
 ## Skills (AI-invokable methodology)
 
@@ -45,7 +46,10 @@ the code.
 | verification | `debug-bughunting` |
 | verification | `vcd-debug` — no-GUI VCD debug (targeted dump + `analyze_waves.py`) |
 | implementation | `synthesis-impl` |
+| implementation | `xilinx-fpga` — 7-series FPGA (Vivado): ball-map→XDC, synth/impl/bitstream |
 | analog_digital_integration | `rnm-mixed-signal` |
+| pcb | `kicad-pcb-flow` — KiCad headless (kicad-cli + pcbnew), DSN/SES, stackup/DRC, F8 |
+| pcb | `allegro-specctra-routing` — SPECCTRA/Allegro PCB Router headless (push-and-shove) |
 
 All skills are written (When to use / Flow / Gotchas / Sources). Each `Sources`
 section lists the MSIC files it distills, so it can be verified/regenerated
