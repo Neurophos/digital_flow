@@ -20,6 +20,7 @@ Five flow areas, each holding its scripts/docs plus a `skills/` subdir:
 | `implementation/` | synthesis (Genus), LEC, physical verification, **Xilinx FPGA build** |
 | `analog_digital_integration/` | RNM / mixed-signal modeling, analog↔digital handoff |
 | `pcb/` | board-level: KiCad schematic/layout headless flow, Cadence SPECCTRA autorouting |
+| `project/` | cross-cutting: repo hygiene, artifact organization, external-handoff/delivery methodology |
 
 ## Skills (AI-invokable methodology)
 
@@ -50,6 +51,7 @@ the code.
 | analog_digital_integration | `rnm-mixed-signal` |
 | pcb | `kicad-pcb-flow` — KiCad headless (kicad-cli + pcbnew), DSN/SES, stackup/DRC, F8 |
 | pcb | `allegro-specctra-routing` — SPECCTRA/Allegro PCB Router headless (push-and-shove) |
+| project | `ai-artifact-separation` — `.ai/` split of internal-vs-deliverable; clone+delete-`.ai/` external handoff |
 
 All skills are written (When to use / Flow / Gotchas / Sources). Each `Sources`
 section lists the MSIC files it distills, so it can be verified/regenerated
@@ -97,3 +99,10 @@ done
 - Skills capture both the tool flow *and* the hard-won gotchas (the coverage
   exclusion discipline, the tb_ctrl command-handler pattern, the RNM two flows,
   the formal `n_`-vs-registered pitfall).
+- **Internal vs deliverable — the `.ai/` convention.** Keep AI/working artifacts
+  (status/findings notes, generators & tooling, intermediate/scratch) under `.ai/`
+  directories so a project stays one repo yet ships to an external party by deleting
+  every `.ai/`. A shared doc must never link *into* `.ai/`. See the
+  **`project/ai-artifact-separation`** skill for the directory pattern, the
+  `doc/` = SPEC + THEORY_OF_OPERATION consolidation, the clone→strip→zip handoff, and
+  the verification gates.
